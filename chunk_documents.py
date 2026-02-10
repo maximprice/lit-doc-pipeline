@@ -1,0 +1,599 @@
+"""
+Section-aware chunking for litigation documents.
+
+Creates semantic chunks that preserve document structure and citation metadata:
+- Depositions: Never split Q/A pairs
+- Expert reports: Preserve paragraph boundaries with inline footnotes
+- Patents: Preserve claim structure and column formatting
+- All types: Attach complete citation metadata (page, Bates, line numbers)
+
+Output: Context cards ready for vector indexing.
+"""
+
+import json
+import logging
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+from citation_types import DocumentType, Chunk
+
+logger = logging.getLogger(__name__)
+
+# Chunking parameters
+DEFAULT_TARGET_TOKENS = 800  # Target chunk size
+DEFAULT_MAX_TOKENS = 1200    # Hard limit before forcing split
+DEFAULT_OVERLAP_TOKENS = 100  # Overlap between chunks
+CHARS_PER_TOKEN = 4          # Rough estimate: 1 token ≈ 4 characters
+
+
+@dataclass
+class ChunkMetadata:
+    """Metadata collected while building a chunk."""
+    text_ids: List[str] = field(default_factory=list)
+    pages: List[int] = field(default_factory=list)
+    bates_stamps: List[str] = field(default_factory=list)
+    line_ranges: Dict[int, Tuple[int, int]] = field(default_factory=dict)  # page -> (line_start, line_end)
+    paragraph_numbers: List[int] = field(default_factory=list)
+    columns: List[int] = field(default_factory=list)
+    transcript_pages: List[int] = field(default_factory=list)
+
+
+class DocumentChunker:
+    """
+    Create semantic chunks from processed markdown with citation metadata.
+
+    Reads:
+    - {stem}.md: Markdown with [TEXT:N], [PAGE:N], [FOOTNOTE:...] markers
+    - {stem}_citations.json: Citation metadata keyed by #/texts/N or line_P*_L*
+
+    Outputs:
+    - {stem}_chunks.json: Array of context cards with full citation data
+    """
+
+    def __init__(
+        self,
+        converted_dir: str,
+        target_tokens: int = DEFAULT_TARGET_TOKENS,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        overlap_tokens: int = DEFAULT_OVERLAP_TOKENS,
+    ):
+        self.converted_dir = Path(converted_dir)
+        self.target_tokens = target_tokens
+        self.max_tokens = max_tokens
+        self.overlap_tokens = overlap_tokens
+
+    def chunk_document(
+        self,
+        stem: str,
+        doc_type: DocumentType = DocumentType.UNKNOWN,
+        source_file: str = "",
+    ) -> List[Chunk]:
+        """
+        Create chunks from a processed document.
+
+        Args:
+            stem: Document stem (e.g., "daniel_alexander_10_24_2025")
+            doc_type: Document type for type-specific handling
+            source_file: Original PDF filename for metadata
+
+        Returns:
+            List of Chunk objects with complete citation data
+        """
+        # Load inputs
+        md_content, citations = self._load_inputs(stem)
+        if not md_content or not citations:
+            logger.warning("Missing inputs for %s", stem)
+            return []
+
+        # Parse markdown into sections
+        sections = self._parse_markdown(md_content, doc_type)
+        logger.info("Parsed %d sections from markdown", len(sections))
+
+        # Create chunks from sections
+        chunks = []
+        if doc_type == DocumentType.DEPOSITION:
+            chunks = self._chunk_deposition(sections, citations, stem, source_file)
+        elif doc_type in (DocumentType.EXPERT_REPORT, DocumentType.PLEADING):
+            chunks = self._chunk_expert_report(sections, citations, stem, source_file)
+        elif doc_type == DocumentType.PATENT:
+            chunks = self._chunk_patent(sections, citations, stem, source_file)
+        else:
+            chunks = self._chunk_generic(sections, citations, stem, source_file)
+
+        logger.info("Created %d chunks from %s", len(chunks), stem)
+
+        # Save chunks
+        output_path = self.converted_dir / f"{stem}_chunks.json"
+        with open(output_path, "w") as f:
+            json.dump([c.to_dict() for c in chunks], f, indent=2)
+
+        logger.info("Saved chunks to %s", output_path)
+        return chunks
+
+    # ── Loading ──────────────────────────────────────────────────────
+
+    def _load_inputs(self, stem: str) -> Tuple[Optional[str], Optional[dict]]:
+        """Load markdown and citations JSON."""
+        md_path = self.converted_dir / f"{stem}.md"
+        citations_path = self.converted_dir / f"{stem}_citations.json"
+
+        if not md_path.exists():
+            logger.error("Markdown file not found: %s", md_path)
+            return None, None
+
+        if not citations_path.exists():
+            logger.error("Citations file not found: %s", citations_path)
+            return None, None
+
+        with open(md_path, "r", encoding="utf-8") as f:
+            md_content = f.read()
+
+        with open(citations_path, "r", encoding="utf-8") as f:
+            citations = json.load(f)
+
+        return md_content, citations
+
+    # ── Markdown Parsing ─────────────────────────────────────────────
+
+    def _parse_markdown(self, content: str, doc_type: DocumentType) -> List[dict]:
+        """
+        Parse markdown into logical sections.
+
+        Returns:
+            List of section dicts with 'lines', 'text_markers', 'type'
+        """
+        lines = content.split("\n")
+        sections = []
+        current_section = {
+            "lines": [],
+            "text_markers": [],
+            "type": "content"
+        }
+
+        for line in lines:
+            # Detect section boundaries
+            if line.startswith("## ") or line.startswith("# "):
+                # Save current section and start new one
+                if current_section["lines"]:
+                    sections.append(current_section)
+                current_section = {
+                    "lines": [line],
+                    "text_markers": [],
+                    "type": "header"
+                }
+                continue
+
+            # Track [TEXT:N] markers
+            if line.startswith("[TEXT:"):
+                match = re.match(r"\[TEXT:(\d+)\]", line)
+                if match:
+                    current_section["text_markers"].append(match.group(1))
+                # Don't add the marker line to content
+                continue
+
+            # Skip other markers (will be parsed when needed)
+            if line.startswith("[PAGE:") or line.startswith("[BATES:"):
+                current_section["lines"].append(line)
+                continue
+
+            current_section["lines"].append(line)
+
+        # Add final section
+        if current_section["lines"]:
+            sections.append(current_section)
+
+        return sections
+
+    # ── Deposition Chunking ──────────────────────────────────────────
+
+    def _chunk_deposition(
+        self,
+        sections: List[dict],
+        citations: dict,
+        stem: str,
+        source_file: str,
+    ) -> List[Chunk]:
+        """
+        Chunk deposition preserving Q/A pairs.
+
+        CRITICAL: Never split a Q from its A.
+        """
+        chunks = []
+        current_chunk_lines = []
+        current_metadata = ChunkMetadata()
+
+        for section in sections:
+            for line in section["lines"]:
+                # Track page markers
+                if line.startswith("[PAGE:"):
+                    match = re.match(r"\[PAGE:(\d+)\]", line)
+                    if match:
+                        page = int(match.group(1))
+                        if page not in current_metadata.transcript_pages:
+                            current_metadata.transcript_pages.append(page)
+                    continue
+
+                # Parse line number and Q/A marker
+                match = re.match(r"^\s*(\d{1,2})\s+([QA])\s+(.+)$", line)
+                if match:
+                    line_num = int(match.group(1))
+                    qa_marker = match.group(2)
+                    text = match.group(3)
+
+                    # Look up citation for this line
+                    current_page = current_metadata.transcript_pages[-1] if current_metadata.transcript_pages else 1
+                    cite_key = f"line_P{current_page}_L{line_num}"
+                    if cite_key in citations:
+                        cit = citations[cite_key]
+                        page = cit.get("page", current_page)
+                        if page not in current_metadata.pages:
+                            current_metadata.pages.append(page)
+
+                        # Track line range for this page
+                        if current_page not in current_metadata.line_ranges:
+                            current_metadata.line_ranges[current_page] = (line_num, line_num)
+                        else:
+                            start, end = current_metadata.line_ranges[current_page]
+                            current_metadata.line_ranges[current_page] = (min(start, line_num), max(end, line_num))
+
+                        bates = cit.get("bates")
+                        if bates and bates not in current_metadata.bates_stamps:
+                            current_metadata.bates_stamps.append(bates)
+
+                    current_chunk_lines.append(line)
+
+                    # Check if we should start a new chunk
+                    # Rule 1: If this is a Q, check if adding the expected A would exceed max_tokens
+                    # Rule 2: Never split before an A
+                    chunk_text = "\n".join(current_chunk_lines)
+                    tokens = len(chunk_text) // CHARS_PER_TOKEN
+
+                    if qa_marker == "A" and tokens >= self.target_tokens:
+                        # Complete chunk after this A
+                        chunk = self._create_chunk(
+                            chunk_text, current_metadata, stem, source_file,
+                            len(chunks), DocumentType.DEPOSITION
+                        )
+                        chunks.append(chunk)
+
+                        # Start new chunk with overlap (last few lines)
+                        overlap_lines = current_chunk_lines[-3:] if len(current_chunk_lines) > 3 else []
+                        current_chunk_lines = overlap_lines
+                        current_metadata = ChunkMetadata()
+                        # Preserve page/Bates from overlap
+                        if chunk.pages:
+                            current_metadata.pages = [chunk.pages[-1]]
+                            current_metadata.transcript_pages = [chunk.citation.get("transcript_pages", [])[-1]] if chunk.citation.get("transcript_pages") else []
+                        if chunk.citation.get("bates_range"):
+                            current_metadata.bates_stamps = [chunk.citation["bates_range"][-1]]
+
+                else:
+                    current_chunk_lines.append(line)
+
+        # Add final chunk
+        if current_chunk_lines:
+            chunk_text = "\n".join(current_chunk_lines)
+            chunk = self._create_chunk(
+                chunk_text, current_metadata, stem, source_file,
+                len(chunks), DocumentType.DEPOSITION
+            )
+            chunks.append(chunk)
+
+        return chunks
+
+    # ── Expert Report Chunking ───────────────────────────────────────
+
+    def _chunk_expert_report(
+        self,
+        sections: List[dict],
+        citations: dict,
+        stem: str,
+        source_file: str,
+    ) -> List[Chunk]:
+        """
+        Chunk expert report by paragraphs with inline footnotes.
+
+        Strategy: Preserve paragraph boundaries, include footnotes with their paragraphs.
+        """
+        chunks = []
+        current_chunk_lines = []
+        current_metadata = ChunkMetadata()
+
+        for section in sections:
+            for line in section["lines"]:
+                # Skip empty lines
+                if not line.strip():
+                    current_chunk_lines.append(line)
+                    continue
+
+                # Detect paragraph start (numbered paragraphs)
+                para_match = re.match(r"^(\d+)\.\s+", line)
+
+                # Check if we should start a new chunk
+                chunk_text = "\n".join(current_chunk_lines)
+                tokens = len(chunk_text) // CHARS_PER_TOKEN
+
+                # Split at paragraph boundaries when target size reached
+                if para_match and tokens >= self.target_tokens and current_chunk_lines:
+                    chunk = self._create_chunk(
+                        chunk_text, current_metadata, stem, source_file,
+                        len(chunks), DocumentType.EXPERT_REPORT
+                    )
+                    chunks.append(chunk)
+
+                    # Start new chunk (no overlap for expert reports - paragraphs are self-contained)
+                    current_chunk_lines = []
+                    current_metadata = ChunkMetadata()
+
+                current_chunk_lines.append(line)
+
+                # Extract text markers from section
+                for text_id in section.get("text_markers", []):
+                    if text_id not in current_metadata.text_ids:
+                        current_metadata.text_ids.append(text_id)
+                        # Look up citation
+                        cite_key = f"#/texts/{text_id}"
+                        if cite_key in citations:
+                            self._update_metadata(current_metadata, citations[cite_key])
+
+        # Add final chunk
+        if current_chunk_lines:
+            chunk_text = "\n".join(current_chunk_lines)
+            chunk = self._create_chunk(
+                chunk_text, current_metadata, stem, source_file,
+                len(chunks), DocumentType.EXPERT_REPORT
+            )
+            chunks.append(chunk)
+
+        return chunks
+
+    # ── Patent Chunking ──────────────────────────────────────────────
+
+    def _chunk_patent(
+        self,
+        sections: List[dict],
+        citations: dict,
+        stem: str,
+        source_file: str,
+    ) -> List[Chunk]:
+        """Chunk patent preserving claim structure."""
+        # For now, use generic chunking
+        # TODO: Implement claim-aware chunking
+        return self._chunk_generic(sections, citations, stem, source_file)
+
+    # ── Generic Chunking ─────────────────────────────────────────────
+
+    def _chunk_generic(
+        self,
+        sections: List[dict],
+        citations: dict,
+        stem: str,
+        source_file: str,
+    ) -> List[Chunk]:
+        """Generic chunking by token count."""
+        chunks = []
+        current_chunk_lines = []
+        current_metadata = ChunkMetadata()
+
+        for section in sections:
+            # Collect text markers from this section
+            for text_id in section.get("text_markers", []):
+                if text_id not in current_metadata.text_ids:
+                    current_metadata.text_ids.append(text_id)
+                    cite_key = f"#/texts/{text_id}"
+                    if cite_key in citations:
+                        self._update_metadata(current_metadata, citations[cite_key])
+
+            for line in section["lines"]:
+                current_chunk_lines.append(line)
+
+                # Check chunk size
+                chunk_text = "\n".join(current_chunk_lines)
+                tokens = len(chunk_text) // CHARS_PER_TOKEN
+
+                if tokens >= self.target_tokens:
+                    chunk = self._create_chunk(
+                        chunk_text, current_metadata, stem, source_file,
+                        len(chunks), DocumentType.UNKNOWN
+                    )
+                    chunks.append(chunk)
+
+                    # Start new chunk with overlap
+                    overlap_lines = current_chunk_lines[-5:] if len(current_chunk_lines) > 5 else []
+                    current_chunk_lines = overlap_lines
+                    current_metadata = ChunkMetadata()
+
+        # Add final chunk
+        if current_chunk_lines:
+            chunk_text = "\n".join(current_chunk_lines)
+            chunk = self._create_chunk(
+                chunk_text, current_metadata, stem, source_file,
+                len(chunks), DocumentType.UNKNOWN
+            )
+            chunks.append(chunk)
+
+        return chunks
+
+    # ── Metadata Helpers ─────────────────────────────────────────────
+
+    def _update_metadata(self, metadata: ChunkMetadata, citation: dict):
+        """Update chunk metadata from a citation dict."""
+        page = citation.get("page")
+        if page and page not in metadata.pages:
+            metadata.pages.append(page)
+
+        bates = citation.get("bates")
+        if bates and bates not in metadata.bates_stamps:
+            metadata.bates_stamps.append(bates)
+
+        line_start = citation.get("line_start")
+        line_end = citation.get("line_end")
+        transcript_page = citation.get("transcript_page")
+
+        if transcript_page and line_start:
+            if transcript_page not in metadata.line_ranges:
+                metadata.line_ranges[transcript_page] = (line_start, line_end or line_start)
+            else:
+                start, end = metadata.line_ranges[transcript_page]
+                metadata.line_ranges[transcript_page] = (
+                    min(start, line_start),
+                    max(end, line_end or line_start)
+                )
+
+        para = citation.get("paragraph_number")
+        if para and para not in metadata.paragraph_numbers:
+            metadata.paragraph_numbers.append(para)
+
+        col = citation.get("column")
+        if col and col not in metadata.columns:
+            metadata.columns.append(col)
+
+        tp = citation.get("transcript_page")
+        if tp and tp not in metadata.transcript_pages:
+            metadata.transcript_pages.append(tp)
+
+    def _create_chunk(
+        self,
+        text: str,
+        metadata: ChunkMetadata,
+        stem: str,
+        source_file: str,
+        chunk_idx: int,
+        doc_type: DocumentType,
+    ) -> Chunk:
+        """Create a Chunk object with complete citation metadata."""
+        # Generate chunk ID
+        chunk_id = f"{stem}_chunk_{chunk_idx:04d}"
+
+        # Build citation dict
+        citation = {
+            "pdf_pages": sorted(set(metadata.pages)),
+            "bates_range": metadata.bates_stamps,
+        }
+
+        # Add type-specific fields
+        if metadata.line_ranges:
+            citation["transcript_lines"] = {
+                str(pg): list(rng) for pg, rng in metadata.line_ranges.items()
+            }
+            citation["transcript_pages"] = sorted(set(metadata.transcript_pages))
+
+        if metadata.paragraph_numbers:
+            citation["paragraph_numbers"] = sorted(set(metadata.paragraph_numbers))
+
+        if metadata.columns:
+            citation["column_lines"] = {
+                "columns": sorted(set(metadata.columns))
+            }
+
+        # Generate citation string
+        citation_string = self._generate_citation_string(
+            stem, doc_type, metadata
+        )
+
+        # Calculate tokens
+        tokens = len(text) // CHARS_PER_TOKEN
+
+        return Chunk(
+            chunk_id=chunk_id,
+            core_text=text,
+            pages=sorted(set(metadata.pages)),
+            citation=citation,
+            citation_string=citation_string,
+            tokens=tokens,
+            doc_type=doc_type,
+        )
+
+    def _generate_citation_string(
+        self,
+        stem: str,
+        doc_type: DocumentType,
+        metadata: ChunkMetadata,
+    ) -> str:
+        """Generate human-readable citation string."""
+        # Extract document name from stem
+        doc_name = stem.replace("_", " ").title()
+
+        if doc_type == DocumentType.DEPOSITION:
+            # Format: "Daniel Alexander Dep. 14:5-15:12"
+            if metadata.line_ranges:
+                ranges = []
+                for pg in sorted(metadata.line_ranges.keys()):
+                    start, end = metadata.line_ranges[pg]
+                    if start == end:
+                        ranges.append(f"{pg}:{start}")
+                    else:
+                        ranges.append(f"{pg}:{start}-{end}")
+                return f"{doc_name} Dep. {', '.join(ranges)}"
+            return f"{doc_name} Dep."
+
+        elif doc_type in (DocumentType.EXPERT_REPORT, DocumentType.PLEADING):
+            # Format: "Cole Report ¶¶25-26"
+            if metadata.paragraph_numbers:
+                paras = sorted(set(metadata.paragraph_numbers))
+                if len(paras) == 1:
+                    return f"{doc_name} ¶{paras[0]}"
+                else:
+                    return f"{doc_name} ¶¶{paras[0]}-{paras[-1]}"
+            return f"{doc_name}"
+
+        elif doc_type == DocumentType.PATENT:
+            # Format: "'152 Patent, col. 3:45-55"
+            if metadata.columns:
+                cols = sorted(set(metadata.columns))
+                return f"{doc_name}, col. {cols[0]}"
+            return f"{doc_name}"
+
+        else:
+            # Generic: "Document Name, p. 14"
+            if metadata.pages:
+                pages = sorted(set(metadata.pages))
+                if len(pages) == 1:
+                    return f"{doc_name}, p. {pages[0]}"
+                else:
+                    return f"{doc_name}, pp. {pages[0]}-{pages[-1]}"
+            return f"{doc_name}"
+
+
+def chunk_all_documents(
+    converted_dir: str,
+    target_tokens: int = DEFAULT_TARGET_TOKENS,
+) -> Dict[str, List[Chunk]]:
+    """
+    Chunk all documents in a converted directory.
+
+    Args:
+        converted_dir: Directory containing .md and _citations.json files
+        target_tokens: Target chunk size in tokens
+
+    Returns:
+        Dict mapping stem to list of chunks
+    """
+    converted_dir = Path(converted_dir)
+    chunker = DocumentChunker(str(converted_dir), target_tokens=target_tokens)
+
+    results = {}
+    for md_file in sorted(converted_dir.glob("*.md")):
+        stem = md_file.stem
+
+        # Skip if citations file doesn't exist
+        citations_file = converted_dir / f"{stem}_citations.json"
+        if not citations_file.exists():
+            logger.warning("No citations file for %s, skipping", stem)
+            continue
+
+        # Detect doc type (could be enhanced)
+        doc_type = DocumentType.UNKNOWN
+        if "deposition" in stem or "alexander" in stem:
+            doc_type = DocumentType.DEPOSITION
+        elif "report" in stem or "cole" in stem:
+            doc_type = DocumentType.EXPERT_REPORT
+        elif "patent" in stem or "00006214" in stem:
+            doc_type = DocumentType.PATENT
+
+        chunks = chunker.chunk_document(stem, doc_type, md_file.name)
+        results[stem] = chunks
+
+    return results

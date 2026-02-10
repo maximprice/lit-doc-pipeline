@@ -143,7 +143,7 @@ class CitationTracker:
     # ── Loading ──────────────────────────────────────────────────────────
 
     def _load_inputs(self, stem: str) -> Tuple[Optional[dict], Dict[str, str]]:
-        """Load Docling JSON and optional Bates sidecar."""
+        """Load Docling JSON and extract Bates stamps from page footers."""
         json_path = self.converted_dir / f"{stem}.json"
         if not json_path.exists():
             logger.warning("No JSON file found at %s", json_path)
@@ -152,13 +152,57 @@ class CitationTracker:
         with open(json_path) as f:
             doc_data = json.load(f)
 
-        bates_by_page: Dict[str, str] = {}
+        # Extract Bates stamps from page_footer elements in JSON
+        bates_by_page = self._extract_bates_from_json(doc_data)
+
+        # Also check for optional Bates sidecar (legacy support)
         bates_path = self.converted_dir / f"{stem}_bates.json"
         if bates_path.exists():
             with open(bates_path) as f:
-                bates_by_page = json.load(f)
+                sidecar_bates = json.load(f)
+                # Merge sidecar into extracted (sidecar takes precedence)
+                bates_by_page.update(sidecar_bates)
+
+        if bates_by_page:
+            logger.info("Extracted Bates stamps for %d pages", len(bates_by_page))
 
         return doc_data, bates_by_page
+
+    def _extract_bates_from_json(self, doc_data: dict) -> Dict[str, str]:
+        """Extract Bates stamps from page_footer elements in Docling JSON.
+
+        Returns:
+            Dict mapping page_no (as string) to Bates stamp
+        """
+        bates_patterns = [
+            re.compile(r'INTEL_PROX_\d{5,11}'),
+            re.compile(r'PROX_INTEL[-_]\d{5,11}'),
+            re.compile(r'[A-Z]{2,}[-_][A-Z]{2,}[-_]\d{5,}')
+        ]
+
+        bates_by_page: Dict[str, str] = {}
+        texts = doc_data.get("texts", [])
+
+        for elem in texts:
+            # Look for page_footer elements
+            if elem.get("label") != "page_footer":
+                continue
+
+            text = elem.get("text", "").strip()
+            page_no = self._get_page_no(elem)
+
+            if not text or page_no is None:
+                continue
+
+            # Try to match Bates pattern
+            for pattern in bates_patterns:
+                match = pattern.search(text)
+                if match:
+                    bates_stamp = match.group(0)
+                    bates_by_page[str(page_no)] = bates_stamp
+                    break
+
+        return bates_by_page
 
     def _build_self_ref_map(self, texts: list) -> Dict[int, str]:
         """Map array index to self_ref string.

@@ -144,9 +144,12 @@ class DoclingConverter:
 
     def _build_docling_command(self, input_path: Path, output_dir: Path) -> List[str]:
         """Build Docling command with proper flags."""
+        import sys
+        # Use docling from the same venv as the running Python interpreter
+        docling_bin = str(Path(sys.executable).parent / "docling")
         cmd = [
-            "docling",
-            "--to", "md",  # ONLY markdown, no JSON
+            docling_bin,
+            "--to", "md", "--to", "json",  # Both markdown and JSON for citation tracking
             "--image-export-mode", self.config["image_export_mode"],
             "--output", str(output_dir),
             str(input_path)

@@ -1,0 +1,20 @@
+{
+  "document": "intel_prox_00002382",
+  "total_cards": 445,
+  "total_score": 10,
+  "pagination": 2,
+  "quotes": 2,
+  "titles": 2,
+  "enrichment": 2,
+  "organization": 2,
+  "issues": [],
+  "md_size": 554089,
+  "md_lines": 4044,
+  "categories": {
+    "prior_art": 421,
+    "background": 3,
+    "claim_construction": 2,
+    "statutory_regulatory": 19
+  },
+  "total_quotes": 1265
+}

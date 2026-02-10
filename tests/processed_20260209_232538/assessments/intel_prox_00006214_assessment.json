@@ -1,0 +1,18 @@
+{
+  "document": "intel_prox_00006214",
+  "total_cards": 8,
+  "total_score": 10,
+  "pagination": 2,
+  "quotes": 2,
+  "titles": 2,
+  "enrichment": 2,
+  "organization": 2,
+  "issues": [],
+  "md_size": 77482,
+  "md_lines": 258,
+  "categories": {
+    "prior_art": 5,
+    "background": 3
+  },
+  "total_quotes": 26
+}

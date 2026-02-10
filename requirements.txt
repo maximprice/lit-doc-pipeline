@@ -1,0 +1,28 @@
+# Core dependencies
+docling>=2.70.0              # PDF/DOCX conversion
+pymupdf>=1.24.0              # PDF extraction
+scikit-learn>=1.5.0          # BM25/TF-IDF
+chromadb>=0.4.0              # Vector store
+numpy>=2.0.0                 # Numerical ops
+
+# Excel support
+openpyxl>=3.1.0              # XLSX files
+xlrd>=2.0.1                  # XLS files (older Excel)
+
+# Email support (EML, MSG)
+extract-msg>=0.45.0          # MSG files
+
+# PowerPoint
+python-pptx>=0.6.21          # PPTX files
+
+# Additional formats
+python-docx2txt>=0.8         # Improved DOCX extraction
+pillow>=10.0.0               # Image formats (JPEG, PNG)
+pdfplumber>=0.10.0           # Alternative PDF parser
+
+# Text extraction fallback
+textract>=1.6.5              # Universal text extractor
+
+# Optional dependencies (install separately if needed)
+# sentence-transformers>=3.0.0  # Cross-encoder reranking
+# anthropic>=0.40.0             # Claude API for enrichment

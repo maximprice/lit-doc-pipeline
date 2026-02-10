@@ -1,0 +1,20 @@
+{
+  "chunking": {
+    "min_chunk_chars": 300,
+    "max_chunk_chars": 15000,
+    "target_chunk_chars": 8000,
+    "overlap_paragraphs": 3
+  },
+  "bates_patterns": [
+    "INTEL_PROX_\\d{5,11}",
+    "PROX_INTEL-\\d{5,11}",
+    "[A-Z]{2,}[-_][A-Z]{2,}[-_]\\d{5,}"
+  ],
+  "docling": {
+    "image_export_mode": "placeholder",
+    "enrich_picture_classes": false,
+    "enrich_picture_description": false,
+    "enrich_chart_extraction": false,
+    "enable_ocr": true
+  }
+}

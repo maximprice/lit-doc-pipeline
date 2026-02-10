@@ -1,0 +1,98 @@
+[
+  {
+    "date_string": "April 8, 2000",
+    "date_parsed": "2000-04-08T00:00:00",
+    "source": "INTEL_PROX_00002382.pdf",
+    "card_id": "intel-prox-00002382-pdf--f-3-applicable-european-rules--434",
+    "section": "F.3 Applicable European rules",
+    "context": "nion must comply with EMC Directive 89/336/EEC, and carry the CE mark that claims compliance. After April 8, 2000, compliance with these requirements could be self certified by certain procedures (see"
+  },
+  {
+    "date_string": "November 26, 2001",
+    "date_parsed": "2001-11-26T00:00:00",
+    "source": "INTEL_PROX_00002058.pdf",
+    "card_id": "intel-prox-00002058-pdf--2-references--9",
+    "section": "2. References",
+    "context": "AES), Federal Information Processing Standards Publication 197, US Department of Commerce/N.I.S.T., November 26, 2001.5"
+  },
+  {
+    "date_string": "May 30, 2002",
+    "date_parsed": "2002-05-30T00:00:00",
+    "source": "INTEL_PROX_00002382.pdf",
+    "card_id": "intel-prox-00002382-pdf--f-1-introduction--427",
+    "section": "F.1 Introduction",
+    "context": "EE 802.15.4 equipment would most often be certified. Changes to this FCC rule that became effective May 30, 2002, eliminated the requirement in the United States for spread spectrum if the combination"
+  },
+  {
+    "date_string": "May 30, 2002",
+    "date_parsed": "2002-05-30T00:00:00",
+    "source": "INTEL_PROX_00002382.pdf",
+    "card_id": "intel-prox-00002382-pdf--f-2-1-section-15-35-of-fcc-cfr47--429",
+    "section": "F.2.1 Section 15.35 of FCC CFR47",
+    "context": "This was useful for justifying higher carrier power for nonspread spectrum transmitters before the May 30, 2002, rule change that eliminated the direct sequence requirement for wideband systems. For e"
+  },
+  {
+    "date_string": "May 30, 2002",
+    "date_parsed": "2002-05-30T00:00:00",
+    "source": "INTEL_PROX_00002382.pdf",
+    "card_id": "intel-prox-00002382-pdf--f-24-section-15-247-of-fcc-cfr47--432",
+    "section": "F.24 Section 15.247 of FCC CFR47",
+    "context": "rldwide available band of suitable power and freedom from applications restrictions for IEEE\n\nUntil May 30, 2002, this service category required either FHSS or DSSS, or a combination. However, at that"
+  },
+  {
+    "date_string": "October 24, 2025",
+    "date_parsed": "2025-10-24T00:00:00",
+    "source": "Daniel Alexander - 10-24-2025.pdf",
+    "card_id": "daniel-alexander-10-24-2025-pd--intel-corp---0",
+    "section": "INTEL CORP.,",
+    "context": "Defendant.\n\n10:25 a.m. Eatern time October 24, 2025\n\nVIRTUAL DEPOSITION of DANIEL ALEXANDER, testifying individually and on behalf of the Defendant in"
+  },
+  {
+    "date_string": "October 24,\n\n2025",
+    "date_parsed": "2025-10-24T00:00:00",
+    "source": "Daniel Alexander - 10-24-2025.pdf",
+    "card_id": "daniel-alexander-10-24-2025-pd--daniel-alexander--1",
+    "section": "DANIEL ALEXANDER",
+    "context": "THE VIDEOGRAPHER:  Good morning.  We are going on the record today at 10:25 a.m. on October 24,\n\n2025.\n\nPlease note that this deposition is being conducted virtually.\n\nQuality of the recording depends"
+  },
+  {
+    "date_string": "October\n\n24, 2025",
+    "date_parsed": "2025-10-24T00:00:00",
+    "source": "Daniel Alexander - 10-24-2025.pdf",
+    "card_id": "daniel-alexander-10-24-2025-pd--deposition-errata-sheet--158",
+    "section": "DEPOSITION ERRATA SHEET",
+    "context": "Case Name: PROXENSE v. INTEL.\n\nName of Witness: DANIEL\n\nDate of Deposition: October\n\n24, 2025.\n\nReason Codes:  1. To clarify\n\nthe  record.\n\nTo conform to the facts.\n\nTo correct transcription\n\ne"
+  },
+  {
+    "date_string": "October 29, 2025",
+    "date_parsed": "2025-10-29T00:00:00",
+    "source": "Daniel Alexander - 10-24-2025.pdf",
+    "card_id": "daniel-alexander-10-24-2025-pd--daniel-alexander--157",
+    "section": "DANIEL ALEXANDER",
+    "context": "attorney or party to this action.\n\nIN WITNESS WHEREOF, I have this date subscribed my name. Dated: October 29, 2025\n\n<%20932,Signature%>\n\nStephen J. Moore RPR, CRR"
+  },
+  {
+    "date_string": "16/32/64",
+    "date_parsed": null,
+    "source": "INTEL_PROX_00002058.pdf",
+    "card_id": "intel-prox-00002058-pdf--11-3-modulation-and-coding--300",
+    "section": "11.3 Modulation and coding",
+    "context": "IEEE 802.15.3, 2.4-GIlz physical layer standard specifies uncoded DQPSK modulation as well as QPSK, 16/32/64-QAM with trellis coding (see Ungerboeck [B14]). An 802.15.3-compliant DEV shall, at a minim"
+  },
+  {
+    "date_string": "16/32/64",
+    "date_parsed": null,
+    "source": "INTEL_PROX_00002058.pdf",
+    "card_id": "intel-prox-00002058-pdf--11-3-4-qpsk-and-16-32-64-qam-with-trelli--304",
+    "section": "11.3.4 QPSK and 16/32/64-QAM with trellis coding",
+    "context": "The QPSK and 16/32/64-QAM formats shall use an 8-State 2-D trellis code. The encoder shown in Figure 169 shall be used in"
+  },
+  {
+    "date_string": "16/32/64",
+    "date_parsed": null,
+    "source": "INTEL_PROX_00002058.pdf",
+    "card_id": "intel-prox-00002058-pdf--11-4-7-tail-symbols--311",
+    "section": "11.4.7 Tail symbols",
+    "context": "ted at th end of the frame body.\n\nFigure 182—Assignment of tail symbols for QPSK-TCM\n\nS3 a\n\nFor the 16/32/64-QAM formats, the lower order two input bits x? , to the trellis encoder determine the trell"
+  }
+]

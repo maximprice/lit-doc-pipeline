@@ -1,0 +1,25 @@
+{
+  "document": "daniel_alexander_10_24_2025",
+  "total_cards": 162,
+  "total_score": 9,
+  "pagination": 2,
+  "quotes": 1,
+  "titles": 2,
+  "enrichment": 2,
+  "organization": 2,
+  "issues": [
+    "Limited key quotes"
+  ],
+  "md_size": 126459,
+  "md_lines": 1680,
+  "categories": {
+    "procedural": 25,
+    "witness_statement": 7,
+    "infringement_analysis": 65,
+    "background": 11,
+    "evidence_reference": 24,
+    "discovery": 2,
+    "claim_construction": 28
+  },
+  "total_quotes": 66
+}

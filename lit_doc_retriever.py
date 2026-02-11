@@ -199,7 +199,8 @@ def search_and_display(
     output_dir: str,
     query: str,
     top_k: int,
-    mode: str
+    mode: str,
+    rerank: bool = False
 ) -> None:
     """
     Search and display results.
@@ -209,6 +210,7 @@ def search_and_display(
         query: Search query
         top_k: Number of results to return
         mode: Search mode (bm25, semantic, hybrid)
+        rerank: Whether to apply cross-encoder reranking
     """
     output_path = Path(output_dir)
     index_dir = output_path / "indexes"
@@ -233,7 +235,7 @@ def search_and_display(
     # Execute search
     start_time = time.time()
     try:
-        results = retriever.search(query, top_k=top_k, mode=mode)
+        results = retriever.search(query, top_k=top_k, mode=mode, rerank=rerank)
     except Exception as e:
         logger.error(f"Search failed: {e}")
         sys.exit(1)
@@ -271,12 +273,14 @@ def search_and_display(
         print(f"Pages: {', '.join(map(str, chunk.pages))}")
 
         # Scores
-        if result.bm25_score is not None or result.semantic_score is not None:
+        if result.bm25_score is not None or result.semantic_score is not None or result.reranker_score is not None:
             score_parts = []
             if result.bm25_score is not None:
                 score_parts.append(f"BM25: {result.bm25_score:.3f}")
             if result.semantic_score is not None:
                 score_parts.append(f"Semantic: {result.semantic_score:.3f}")
+            if result.reranker_score is not None:
+                score_parts.append(f"Reranker: {result.reranker_score:.3f}")
             print(f"Scores: {', '.join(score_parts)}")
 
         # Preview
@@ -310,6 +314,10 @@ Examples:
   python lit_doc_retriever.py --index-dir tests/pipeline_output \\
       --query "designated corporate representative" --mode bm25
 
+  # Search with cross-encoder reranking
+  python lit_doc_retriever.py --index-dir tests/pipeline_output \\
+      --query "TWT technology battery life" --rerank
+
   # Show statistics
   python lit_doc_retriever.py --index-dir tests/pipeline_output --stats
         """
@@ -341,6 +349,12 @@ Examples:
     )
 
     parser.add_argument(
+        "--rerank",
+        action="store_true",
+        help="Apply cross-encoder reranking (requires sentence-transformers)"
+    )
+
+    parser.add_argument(
         "--build-index",
         action="store_true",
         help="Build indexes from chunk files"
@@ -365,7 +379,7 @@ Examples:
     elif args.stats:
         show_stats(args.index_dir)
     elif args.query:
-        search_and_display(args.index_dir, args.query, args.top_k, args.mode)
+        search_and_display(args.index_dir, args.query, args.top_k, args.mode, rerank=args.rerank)
     else:
         parser.print_help()
         print("\nError: Must specify --build-index, --stats, or --query")

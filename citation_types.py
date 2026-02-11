@@ -144,4 +144,5 @@ class SearchResult:
     score: float
     bm25_score: Optional[float] = None
     semantic_score: Optional[float] = None
+    reranker_score: Optional[float] = None
     rank: int = 0

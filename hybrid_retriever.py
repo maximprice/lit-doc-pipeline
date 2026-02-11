@@ -162,7 +162,9 @@ class HybridRetriever:
         self,
         query: str,
         top_k: int = 10,
-        mode: str = "hybrid"
+        mode: str = "hybrid",
+        rerank: bool = False,
+        rerank_top_k: Optional[int] = None
     ) -> List[SearchResult]:
         """
         Search for chunks matching the query.
@@ -171,6 +173,8 @@ class HybridRetriever:
             query: Search query string
             top_k: Number of results to return
             mode: Search mode - "bm25", "semantic", or "hybrid"
+            rerank: Whether to apply cross-encoder reranking
+            rerank_top_k: Number of results after reranking (defaults to top_k)
 
         Returns:
             List of SearchResult objects, sorted by score descending
@@ -182,13 +186,35 @@ class HybridRetriever:
         if mode not in ["bm25", "semantic", "hybrid"]:
             raise ValueError(f"Invalid mode: {mode}. Must be 'bm25', 'semantic', or 'hybrid'")
 
+        # When reranking, fetch more candidates for the reranker to select from
+        fetch_k = top_k
+        if rerank:
+            fetch_k = top_k * 10
+
         # Execute searches based on mode
         if mode == "bm25":
-            return self._search_bm25(query, top_k)
+            results = self._search_bm25(query, fetch_k)
         elif mode == "semantic":
-            return self._search_semantic(query, top_k)
+            results = self._search_semantic(query, fetch_k)
         else:  # hybrid
-            return self._search_hybrid(query, top_k)
+            results = self._search_hybrid(query, fetch_k)
+
+        # Apply cross-encoder reranking if requested
+        if rerank and results:
+            final_k = rerank_top_k if rerank_top_k is not None else top_k
+            try:
+                from reranker import Reranker
+                reranker = Reranker()
+                if reranker.is_available():
+                    results = reranker.rerank(query, results, top_k=final_k)
+                else:
+                    logger.warning("Reranker not available, returning results without reranking")
+                    results = results[:final_k]
+            except ImportError:
+                logger.warning("reranker module not found, returning results without reranking")
+                results = results[:final_k]
+
+        return results
 
     def _search_bm25(self, query: str, top_k: int) -> List[SearchResult]:
         """BM25-only search."""

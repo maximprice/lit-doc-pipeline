@@ -18,145 +18,25 @@
 - [x] Context card generation with complete citation metadata
 - [x] JSON cleanup (--cleanup-json flag, default on)
 
-**Test Coverage:** 53 tests passing
+**Phase 3: Vector Search & Retrieval**
+- [x] BM25 keyword search (`bm25_indexer.py`) — TF-IDF with BM25 scoring, <10ms queries
+- [x] Semantic vector store (`vector_indexer.py`) — Chroma + Ollama nomic-embed-text
+- [x] Hybrid search with RRF score fusion (`hybrid_retriever.py`) — three modes: bm25, semantic, hybrid
+- [x] Search CLI (`lit_doc_retriever.py`) — build-index, search, stats commands
+- [x] Graceful degradation to BM25-only when Chroma unavailable
 
----
+**Phase 4: Cross-Encoder Reranker**
+- [x] `reranker.py` — lazy-loaded `cross-encoder/ms-marco-MiniLM-L-6-v2` via sentence-transformers
+- [x] Integrated into `hybrid_retriever.py` — `search(rerank=True)` fetches 10x candidates, reranks to top-k
+- [x] CLI `--rerank` flag in `lit_doc_retriever.py`
+- [x] Graceful degradation when sentence-transformers not installed
+- [x] `reranker_score` field added to `SearchResult`
 
-## 🔄 Phase 3: Vector Search & Retrieval
+**Test Coverage:** 62 passing, 16 skipped | **Search Relevance:** 100% (known doc in top-5)
 
-### 3.1 BM25 Keyword Search
-- [ ] Create `bm25_indexer.py` module
-  - [ ] Use scikit-learn TfidfVectorizer for BM25 scoring
-  - [ ] Build index from chunk text
-  - [ ] Support keyword queries
-  - [ ] Return top-k results with scores
-
-**Implementation:**
-```python
-from sklearn.feature_extraction.text import TfidfVectorizer
-
-class BM25Indexer:
-    def build_index(self, chunks: List[Chunk]) -> None:
-        # Build TF-IDF matrix from chunk texts
-
-    def search(self, query: str, top_k: int = 10) -> List[Tuple[Chunk, float]]:
-        # Return ranked chunks with BM25 scores
-```
-
-**Test:** Verify "TWT technology" returns relevant chunks from Cole Report
-
----
-
-### 3.2 Semantic Vector Store (Chroma)
-- [ ] Create `vector_indexer.py` module
-  - [ ] Initialize Chroma collection
-  - [ ] Use nomic-embed-text for embeddings (274MB model)
-  - [ ] Index chunks with metadata (page, Bates, doc_type)
-  - [ ] Support semantic similarity search
-
-**Dependencies:**
-```bash
-pip install chromadb
-ollama pull nomic-embed-text  # Or use sentence-transformers
-```
-
-**Implementation:**
-```python
-import chromadb
-
-class VectorIndexer:
-    def __init__(self, persist_dir: str):
-        self.client = chromadb.PersistentClient(path=persist_dir)
-
-    def index_chunks(self, chunks: List[Chunk]) -> None:
-        # Add chunks to Chroma with metadata
-
-    def search(self, query: str, top_k: int = 10) -> List[Tuple[Chunk, float]]:
-        # Return semantically similar chunks
-```
-
----
-
-### 3.3 Hybrid Search with Score Fusion
-- [ ] Create `hybrid_retriever.py` module
-  - [ ] Combine BM25 + semantic search
-  - [ ] Score fusion: 0.5 * BM25_score + 0.5 * semantic_score
-  - [ ] Return merged top-k results
-
-**Algorithm:**
-```python
-def hybrid_search(query: str, top_k: int = 10):
-    bm25_results = bm25_indexer.search(query, top_k=top_k*2)
-    semantic_results = vector_indexer.search(query, top_k=top_k*2)
-
-    # Normalize scores and merge
-    merged = merge_and_rerank(bm25_results, semantic_results)
-    return merged[:top_k]
-```
-
----
-
-### 3.4 Search CLI
-- [ ] Create `lit_doc_retriever.py` CLI tool
-  - [ ] Load indexed documents
-  - [ ] Accept query string
-  - [ ] Return top-k chunks with citations
-  - [ ] Format output with citation strings
-
-**Usage:**
-```bash
-python lit_doc_retriever.py \
-  --index-dir tests/pipeline_output \
-  --query "TWT technology battery life" \
-  --top-k 5
-```
-
-**Expected Output:**
-```
-=== Search Results for "TWT technology battery life" ===
-
-1. Cole Report ¶25 (Score: 0.87)
-   Page 11, Bates: PROX_INTEL_00004311
-   "...TWT effective and responsible for its core benefits, including
-   reduced idle listening, improved power efficiency..."
-   [FOOTNOTE 1: See The Peeters Infringement Report at §VII...]
-
-2. Alexander Dep. 27:3-21 (Score: 0.72)
-   Pages 27
-   "TWT feature is not enabled in our products..."
-```
-
----
-
-## 🔄 Phase 4: Cross-Encoder Reranker
-
-### 4.1 Reranker Implementation
-- [ ] Create `reranker.py` module
-  - [ ] Use `cross-encoder/ms-marco-MiniLM-L-6-v2`
-  - [ ] Fetch 10x candidates from hybrid search
-  - [ ] Rerank to top-k using query-document relevance
-  - [ ] Graceful degradation if sentence-transformers not installed
-
-**Dependencies:**
-```bash
-pip install sentence-transformers  # Optional
-```
-
-**Implementation:**
-```python
-from sentence_transformers import CrossEncoder
-
-class Reranker:
-    def __init__(self):
-        self.model = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
-
-    def rerank(self, query: str, chunks: List[Chunk], top_k: int = 10):
-        # Get 10x candidates, rerank, return top-k
-```
-
-**Performance Target:**
-- Precision@5: >90% for known queries
-- Latency: <1 second for 100 candidates
+> **Note — ChromaDB dependency:** Currently using an interim build from ChromaDB's git main branch
+> to work around a Pydantic v1 compatibility issue with Python 3.14. This should be replaced with
+> ChromaDB >=1.5.1 (or next stable release) once it ships with Python 3.14 support.
 
 ---
 
@@ -287,21 +167,29 @@ class Reranker:
 
 ## 📈 Next Immediate Actions
 
-**Priority 1: Vector Search (This Week)**
-1. Implement BM25 indexer (2-3 hours)
-2. Implement Chroma vector store (2-3 hours)
-3. Implement hybrid search with fusion (1-2 hours)
-4. Create search CLI tool (1 hour)
-5. Test on all documents (1 hour)
+**Priority 1: Benchmark Reranker**
+1. Install sentence-transformers and run `--rerank` against test corpus
+2. Measure Precision@5 improvement over hybrid-only
+3. Measure rerank latency for 100 candidates
 
-**Priority 2: Reranker (Next Week)**
-1. Implement cross-encoder reranker (2 hours)
-2. Benchmark search quality improvement (1 hour)
+**Priority 2: Citation Quality Improvements**
+1. Paragraph number extraction for expert reports (0% → 80%+)
+2. Column detection improvement for patents (12.6% → 80%+)
+3. Bates stamp sequential validation
 
-**Priority 3: Polish & Documentation (Following Week)**
-1. Improve paragraph/column detection (3-4 hours)
-2. Write comprehensive documentation (2-3 hours)
-3. Create end-to-end examples (1-2 hours)
+**Priority 3: LLM Enrichment (Phase 5)**
+1. Implement `llm_enrichment.py` with Anthropic + Ollama backends
+2. Summary generation, key quote extraction, categorical tagging
+3. Verbatim quote validation
+
+**Priority 4: Production Polish**
+1. Unified CLI entry point (`lit-pipeline`)
+2. Config file support
+3. Documentation (README, ARCHITECTURE.md)
+4. End-to-end integration tests
+
+### Maintenance
+- [ ] Replace ChromaDB git build with stable >=1.5.1 when available
 
 ---
 
@@ -311,13 +199,15 @@ class Reranker:
 - ✅ **Citation Accuracy:** 100% for text-based depositions, 99.8% Bates coverage
 - ✅ **Processing Speed:** <1 second for text depositions, <5 min per 100 pages for OCR
 - ✅ **Storage Efficiency:** 76% reduction with JSON cleanup
-- ✅ **Test Coverage:** 53 tests passing
+- ✅ **Test Coverage:** 62 tests passing, 16 skipped
+- ✅ **BM25 Search Latency:** <10ms per query
+- ✅ **BM25 Index Build:** 0.04s for 56 chunks
+- ✅ **Search Relevance:** 100% (known doc in top-5)
+- ✅ **Cross-Encoder Reranker:** Implemented with graceful degradation
 
-### Target Metrics for Phase 3
-- **Search Relevance:** Top-5 results include target document 95%+ of time
-- **Search Latency:** <500ms for keyword search, <2s for hybrid search
-- **Index Size:** <100MB per 1,000 pages
-- **Recall@10:** >80% for known relevant passages
+### Target Metrics (Pending Benchmark)
+- **Precision@5 with reranker:** >90% for known queries
+- **Rerank Latency:** <1 second for 100 candidates
 
 ---
 
@@ -335,9 +225,12 @@ class Reranker:
 - Column detection: 12.6% coverage (needs improvement)
 - OCR timeout: Documents >200 pages with dense scans
 - Bates stamps: Only extracted if present in page footers
+- ChromaDB: Using interim git build until stable Python 3.14 support ships
 
 **Architecture Decisions:**
 - PostProcessor handles content transformation (footnotes, text markers)
 - CitationTracker handles geometric metadata extraction (bbox → lines)
 - Chunking reads markdown, not JSON (better for maintainability)
 - Text markers provide lightweight linkage without bloating markdown
+- Hybrid search uses Reciprocal Rank Fusion (RRF) instead of weighted score fusion
+- Lazy imports for ChromaDB and sentence-transformers to allow graceful degradation

@@ -12,7 +12,7 @@
 
 **Phase 2: Core Pipeline**
 - [x] Post-processor with text cleaning
-- [x] Footnote inline insertion for expert reports
+- [x] Footnote inline insertion for all legal documents (expert reports, pleadings, briefs, court opinions)
 - [x] Text markers ([TEXT:N]) for citation linkage
 - [x] Section-aware chunking preserving Q/A pairs
 - [x] Context card generation with complete citation metadata

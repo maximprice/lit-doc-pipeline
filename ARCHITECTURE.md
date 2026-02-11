@@ -71,7 +71,7 @@ The litigation document processing pipeline converts legal documents (PDFs, DOCX
 
 **Process:**
 1. Remove OCR artifacts, concordances, TOCs
-2. Inline footnotes for expert reports (preserves substantive notes)
+2. Inline footnotes for expert reports and any legal writing with footnotes (preserves substantive notes)
 3. Insert text markers `[TEXT:N]` for citation linkage
 4. Extract citations from markdown text:
    - Page markers: `[PAGE:14]`, `Page 14`

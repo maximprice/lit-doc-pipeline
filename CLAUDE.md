@@ -60,7 +60,7 @@ The pipeline consists of 7 sequential steps:
 - `post_processor.py` - Text cleaning with citation preservation
 - `chunk_documents.py` - Section-aware chunking with Q/A preservation
 - Context card generation with citation metadata
-- Footnote inline insertion for expert reports
+- Footnote inline insertion for all legal documents (expert reports, pleadings, briefs, court opinions)
 
 ### ✅ Phase 3: Vector Search (Complete)
 - `bm25_indexer.py` - TF-IDF keyword search (<10ms queries)

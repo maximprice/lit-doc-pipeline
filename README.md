@@ -27,17 +27,23 @@ ollama pull nomic-embed-text    # 274MB
 ## Quick Start
 
 ```bash
-# Process documents (with optional enrichment)
-python run_pipeline.py --input-dir tests/test_docs --output-dir output --enrich
+# Process documents
+lit-pipeline process tests/test_docs output/
+
+# Process with enrichment
+lit-pipeline process tests/test_docs output/ --enrich --case-type patent
 
 # Build search index
-python lit_doc_retriever.py --index-dir output --build-index
+lit-pipeline index output/
 
 # Search with reranking
-python lit_doc_retriever.py --index-dir output \
-  --query "witness testimony about TWT technology" \
-  --rerank --top-k 10
+lit-pipeline search output/ "witness testimony about TWT technology" --rerank
+
+# Show statistics
+lit-pipeline stats output/
 ```
+
+**Note:** Use `.venv/bin/python lit_pipeline.py` if not installed globally.
 
 ## Project Status
 
@@ -56,7 +62,11 @@ python lit_doc_retriever.py --index-dir output \
 - Patents: 84.5% column detection on spec pages
 - Bates stamps: Sequential validation with gap detection
 
-See [NEXT_STEPS.md](NEXT_STEPS.md) for remaining work and [CLAUDE.md](CLAUDE.md) for implementation guidance.
+**Documentation:**
+- [QUICK_START.md](QUICK_START.md) - Getting started guide
+- [ARCHITECTURE.md](ARCHITECTURE.md) - Technical architecture and design
+- [NEXT_STEPS.md](NEXT_STEPS.md) - Roadmap and remaining work
+- [CLAUDE.md](CLAUDE.md) - Implementation guidance
 
 ## License
 

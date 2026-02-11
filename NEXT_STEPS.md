@@ -155,13 +155,13 @@
 
 ## 📈 Next Immediate Actions
 
-**Priority 1: Production Polish** ← **Current Priority**
-1. Unified CLI entry point (`lit-pipeline` command)
-2. Config file support for pipeline parameters
-3. Documentation updates (README, ARCHITECTURE.md)
-4. End-to-end integration tests
+**Production Polish** ✅ **COMPLETE**
+1. [x] Unified CLI entry point (`lit-pipeline` command with 5 subcommands)
+2. [x] Config file support (JSON/YAML with CLI override)
+3. [x] ARCHITECTURE.md documentation (comprehensive technical design)
+4. [x] End-to-end integration tests (12 new tests)
 
-**Priority 3: Benchmark & Optimization**
+**Priority 1: Benchmark & Optimization** ← **Current Priority**
 1. Install sentence-transformers and run `--rerank` against test corpus
 2. Measure Precision@5 improvement over hybrid-only
 3. Measure rerank latency for 100 candidates

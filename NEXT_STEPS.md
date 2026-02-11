@@ -1,6 +1,6 @@
 # Next Steps: Litigation Document Pipeline
 
-## Current Status (As of 2026-02-10)
+## Current Status (As of 2026-02-11)
 
 ### ✅ Completed Phases
 
@@ -32,36 +32,21 @@
 - [x] Graceful degradation when sentence-transformers not installed
 - [x] `reranker_score` field added to `SearchResult`
 
-**Test Coverage:** 62 passing, 16 skipped | **Search Relevance:** 100% (known doc in top-5)
+**Phase 5: LLM Enrichment**
+- [x] `llm_enrichment.py` — Three backends: Ollama, Anthropic, Claude Code
+- [x] Quote validation: only exact substrings kept (discards hallucinations per TRD 9.4)
+- [x] Category/relevance validation with sensible defaults (14 valid categories)
+- [x] Claims filtering to reject patent numbers (>100)
+- [x] CLI integration: `--enrich`, `--enrich-backend`, `--case-type`, `--parties` flags
+- [x] Retriever displays enrichment metadata in search results
+- [x] Backup creation on first enrichment run
+- [x] `/enrich-chunks` skill for Claude Code interactive use
+
+**Test Coverage:** 109 total (93 passing, 16 skipped) | **Search Relevance:** 100% (known doc in top-5)
 
 > **Note — ChromaDB dependency:** Currently using an interim build from ChromaDB's git main branch
 > to work around a Pydantic v1 compatibility issue with Python 3.14. This should be replaced with
 > ChromaDB >=1.5.1 (or next stable release) once it ships with Python 3.14 support.
-
----
-
-## 🔄 Phase 5: LLM Enrichment (Optional)
-
-### 5.1 Parallel Enrichment
-- [ ] Create `llm_enrichment.py` module
-  - [ ] Use Claude Code background agents for parallel processing
-  - [ ] Generate summaries, key quotes, categorization
-  - [ ] Post-process validation (verify quotes are verbatim)
-
-**Features:**
-- [ ] Summary generation (2-3 sentences per chunk)
-- [ ] Key quote extraction (deterministic, not LLM-generated)
-- [ ] Categorical tagging (witness_statement, technical_claim, etc.)
-- [ ] Relevance scoring (high/medium/low)
-
-**Backend Support:**
-- [ ] Anthropic API (Claude)
-- [ ] Ollama (local llama3.1:8b)
-
-**Validation:**
-- [ ] Verify key quotes exist verbatim in core_text
-- [ ] Flag hallucinated content
-- [ ] Preserve original chunk text
 
 ---
 
@@ -167,26 +152,28 @@
 
 ## 📈 Next Immediate Actions
 
-**Priority 1: Benchmark Reranker**
-1. Install sentence-transformers and run `--rerank` against test corpus
-2. Measure Precision@5 improvement over hybrid-only
-3. Measure rerank latency for 100 candidates
-
-**Priority 2: Citation Quality Improvements**
+**Priority 1: Citation Quality Improvements**
 1. Paragraph number extraction for expert reports (0% → 80%+)
 2. Column detection improvement for patents (12.6% → 80%+)
 3. Bates stamp sequential validation
 
-**Priority 3: LLM Enrichment (Phase 5)**
-1. Implement `llm_enrichment.py` with Anthropic + Ollama backends
-2. Summary generation, key quote extraction, categorical tagging
-3. Verbatim quote validation
-
-**Priority 4: Production Polish**
-1. Unified CLI entry point (`lit-pipeline`)
-2. Config file support
-3. Documentation (README, ARCHITECTURE.md)
+**Priority 2: Production Polish**
+1. Unified CLI entry point (`lit-pipeline` command)
+2. Config file support for pipeline parameters
+3. Documentation updates (README, ARCHITECTURE.md)
 4. End-to-end integration tests
+
+**Priority 3: Benchmark & Optimization**
+1. Install sentence-transformers and run `--rerank` against test corpus
+2. Measure Precision@5 improvement over hybrid-only
+3. Measure rerank latency for 100 candidates
+4. Profile enrichment performance (Ollama vs Anthropic)
+
+**Priority 4: Quality Assurance**
+1. Run full pipeline on all 6 test documents
+2. Verify chunk count, citation coverage
+3. Test search relevance on known queries
+4. Measure enrichment quality (quote validation rate, category accuracy)
 
 ### Maintenance
 - [ ] Replace ChromaDB git build with stable >=1.5.1 when available
@@ -199,11 +186,12 @@
 - ✅ **Citation Accuracy:** 100% for text-based depositions, 99.8% Bates coverage
 - ✅ **Processing Speed:** <1 second for text depositions, <5 min per 100 pages for OCR
 - ✅ **Storage Efficiency:** 76% reduction with JSON cleanup
-- ✅ **Test Coverage:** 62 tests passing, 16 skipped
+- ✅ **Test Coverage:** 109 tests (93 passing, 16 skipped)
 - ✅ **BM25 Search Latency:** <10ms per query
 - ✅ **BM25 Index Build:** 0.04s for 56 chunks
 - ✅ **Search Relevance:** 100% (known doc in top-5)
 - ✅ **Cross-Encoder Reranker:** Implemented with graceful degradation
+- ✅ **LLM Enrichment:** Three backends (Ollama/Anthropic/Claude Code) with quote validation
 
 ### Target Metrics (Pending Benchmark)
 - **Precision@5 with reranker:** >90% for known queries

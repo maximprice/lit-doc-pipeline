@@ -1,8 +1,8 @@
 # Quick Start Guide - Litigation Document Pipeline
 
-**Current Status:** Phase 1 Complete ✅ → Ready for Testing
+**Current Status:** Phases 1-5 Complete ✅ → Core Pipeline Functional
 
-This guide will get you started testing the Phase 1 implementation.
+This guide will get you started using the full pipeline with citation tracking, chunking, search, reranking, and optional LLM enrichment.
 
 ---
 
@@ -12,394 +12,325 @@ This guide will get you started testing the Phase 1 implementation.
 
 ```bash
 cd /Users/maximprice/Dev/lit-doc-pipeline
+python -m venv .venv
+source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 pip install -r requirements.txt
 ```
 
 This installs:
 - docling (PDF/DOCX conversion)
-- openpyxl (Excel support)
-- extract-msg (Email support)
-- python-pptx (PowerPoint support)
-- And other format handlers
+- scikit-learn (BM25 keyword search)
+- chromadb (vector search)
+- sentence-transformers (optional, for reranking)
+- anthropic (optional, for enrichment)
 
 ### 2. Verify Installation
 
 ```bash
 python -c "import docling; print('✅ Docling installed')"
-python -c "import openpyxl; print('✅ Excel support installed')"
+python -c "import sklearn; print('✅ scikit-learn installed')"
+python -c "import chromadb; print('✅ ChromaDB installed')"
+```
+
+### 3. Optional: Install Ollama for Embeddings & Enrichment
+
+```bash
+# Install Ollama from https://ollama.ai/
+ollama pull nomic-embed-text  # 274MB, for embeddings
+ollama pull llama3.1:8b        # 4.7GB, for enrichment
 ```
 
 ---
 
-## Quick Test (2 minutes)
+## Quick Test (5 minutes)
 
-### Test with a Sample Document
+### Step 1: Process Documents
 
 ```bash
-# Quick test on any document
-python test_conversion.py /path/to/document.pdf
+# Run full pipeline on test documents
+python run_pipeline.py \
+  --input-dir tests/test_docs \
+  --output-dir tests/pipeline_output
 
-# Or try with Excel
-python test_conversion.py /path/to/spreadsheet.xlsx
-
-# Or email
-python test_conversion.py /path/to/email.eml
+# Or with optional LLM enrichment
+python run_pipeline.py \
+  --input-dir tests/test_docs \
+  --output-dir tests/pipeline_output \
+  --enrich \
+  --enrich-backend ollama \
+  --case-type patent \
+  --parties "Proxim,Intel"
 ```
 
 **Expected Output:**
 ```
-============================================================
-Testing Conversion: document.pdf
-============================================================
-
-Using Docling converter...
-
-✅ Conversion successful!
-Citation Coverage Summary:
-  Document Type: deposition
-  Pages Found: 50
-  Line Markers: 1250
-  Bates Stamps: 50
-  ...
-
-============================================================
-Post-Processing
-============================================================
-
-✅ Post-processing complete!
-Processing Result:
-  Cleaned File: test_output/document.md
-  Citations File: test_output/document_citations.json
-  Citation Coverage: 1250 elements
-
-============================================================
-Output Files
-============================================================
-  Markdown: test_output/document.md
-  Citations: test_output/document_citations.json
+[Step 1] Converting with Docling...
+  Output: daniel_alexander_10_24_2025.md + .json
+[Step 2] Post-processing markdown...
+  Post-processor citation coverage: 1250 elements
+[Step 3] Reconstructing citations from JSON bbox data...
+  Citations: 1250 items, 100.0% coverage
+[Step 4] Chunking document...
+  Created 56 chunks
+[Step 5] LLM Enrichment (backend: ollama)
+  Enrichment complete: 56/56 enriched, 0 skipped, 0 failed
 ```
 
-### Review Output Files
+### Step 2: Build Search Index
 
 ```bash
-# View cleaned markdown
-cat test_output/document.md
-
-# View citation map
-cat test_output/document_citations.json | head -50
+python lit_doc_retriever.py \
+  --index-dir tests/pipeline_output \
+  --build-index
 ```
-
----
-
-## Full Citation Coverage Test (5 minutes)
-
-### Run Comprehensive Testing
-
-```bash
-python tests/test_phase1_citations.py /path/to/document.pdf --output-dir test_output
-```
-
-This will:
-1. ✅ Convert document with Docling
-2. ✅ Post-process and enhance citations
-3. ✅ Analyze citation coverage
-4. ✅ Generate recommendations
 
 **Expected Output:**
 ```
-============================================================
-CITATION COVERAGE REPORT
-============================================================
+Loading chunks...
+Loaded 56 chunks from 5 files
 
-Coverage Statistics:
-  pages:
-    Found: 50
-    Status: ✅ Good
-  bates:
-    Found: 50
-    Status: ✅ Good
-  line_numbers:
-    Found: 1250
-    Status: ✅ Good
-  citation_map_entries: 1250
+Building BM25 index...
+BM25 index built in 0.04s
 
-Recommendations:
-  ✅ Found 50 page markers - good coverage.
-  ✅ Found 1250 line markers - good coverage for deposition.
-  ✅ Created 1250 citation entries. Ready for chunking.
+Building vector index...
+Vector index built in 2.31s
 
-============================================================
+Indexes saved to tests/pipeline_output/indexes
+Build complete!
+```
 
-✅ Citation coverage is sufficient. Can proceed to chunking.
+### Step 3: Search
+
+```bash
+# Search with BM25 only
+python lit_doc_retriever.py \
+  --index-dir tests/pipeline_output \
+  --query "TWT technology battery life" \
+  --mode bm25
+
+# Search with hybrid (BM25 + semantic)
+python lit_doc_retriever.py \
+  --index-dir tests/pipeline_output \
+  --query "TWT technology battery life" \
+  --mode hybrid
+
+# Search with reranking
+python lit_doc_retriever.py \
+  --index-dir tests/pipeline_output \
+  --query "TWT technology battery life" \
+  --rerank
 ```
 
 ---
 
-## What to Test
+## Testing Features
 
-### Priority 1: Document Types
+### Run Full Test Suite
 
-Test on at least one of each type:
+```bash
+.venv/bin/python -m pytest tests/ -v
+```
 
-1. **Deposition Transcript** (PDF with line numbers 1-25)
-   ```bash
-   python tests/test_phase1_citations.py deposition.pdf
-   ```
-   - Should find: pages, line markers (1-25), Bates stamps
-   - Expected coverage: High (>80%)
+**Expected:** 109 tests (93 passing, 16 skipped)
 
-2. **Patent Document** (PDF with column layout)
-   ```bash
-   python tests/test_phase1_citations.py patent.pdf
-   ```
-   - Should find: pages, column markers (col. 1, col. 2)
-   - Expected coverage: Medium-High
+---
 
-3. **Expert Report** (PDF with paragraph numbers)
-   ```bash
-   python tests/test_phase1_citations.py expert_report.pdf
-   ```
-   - Should find: pages, paragraph markers (¶ 1, ¶ 2, ...)
-   - Expected coverage: Medium-High
+## Using Enrichment
 
-4. **Excel Exhibit**
-   ```bash
-   python tests/test_phase1_citations.py exhibit.xlsx
-   ```
-   - Should convert to markdown table
-   - Expected coverage: Basic (pages only)
+### Ollama Backend (Local)
 
-5. **Email Exhibit**
-   ```bash
-   python tests/test_phase1_citations.py email.eml
-   ```
-   - Should extract headers, body, attachments
-   - Expected coverage: Basic (pages only)
+```bash
+# Ensure Ollama is running with the required model
+ollama pull llama3.1:8b
 
-### Priority 2: Edge Cases
+# Run pipeline with enrichment
+python run_pipeline.py \
+  --input-dir tests/test_docs \
+  --output-dir tests/pipeline_output \
+  --enrich \
+  --enrich-backend ollama \
+  --case-type patent \
+  --parties "Proxim,Intel"
+```
 
-- [ ] Scanned PDF (OCR required)
-- [ ] Multi-column patent with inline citations
-- [ ] Deposition with line number gaps
-- [ ] Document with multiple Bates stamp formats
-- [ ] Very large file (>100 pages)
-- [ ] Corrupted or partial file (error handling)
+### Anthropic Backend (Claude API)
+
+```bash
+# Set API key
+export ANTHROPIC_API_KEY="your-api-key-here"
+
+# Run pipeline with Anthropic enrichment
+python run_pipeline.py \
+  --input-dir tests/test_docs \
+  --output-dir tests/pipeline_output \
+  --enrich \
+  --enrich-backend anthropic \
+  --case-type patent
+```
+
+### Claude Code Backend (Interactive)
+
+```bash
+# From within a Claude Code session, use the skill
+/enrich-chunks tests/pipeline_output/converted
+```
+
+### Enrichment Output
+
+Enriched chunks include:
+- **summary**: 2-3 sentence legal significance
+- **category**: One of 14 valid categories (witness_statement, legal_argument, etc.)
+- **relevance_score**: high/medium/low
+- **claims_addressed**: Patent claim numbers mentioned
+- **classification_method**: "llm"
+- **llm_backend**: Backend used (ollama/anthropic/claude_code)
+
+**Quote Validation:** All key quotes are validated as exact substrings of the original text. Hallucinated quotes are automatically discarded.
 
 ---
 
 ## Understanding the Output
 
-### 1. Markdown File (`document.md`)
+### Pipeline Output Structure
 
-Enhanced markdown with structured citation markers:
-
-```markdown
-[PAGE:14]
-[BATES:INTEL_PROX_00001784]
-
-[LINE:5]
-5  Q  Have you seen this document before?
-[LINE:6]
-6  A  Let me read it. I think I saw it, yes.
-
-[PAGE:15]
-[BATES:INTEL_PROX_00001785]
-...
+```
+tests/pipeline_output/
+├── converted/
+│   ├── document_name.md           # Cleaned markdown
+│   ├── document_name_citations.json  # Citation metadata
+│   ├── document_name_chunks.json    # Semantic chunks with citations
+│   └── document_name_bates.json     # Bates stamps (if present)
+└── indexes/
+    ├── bm25_index.pkl              # BM25 keyword index
+    ├── chroma_db/                  # Vector embeddings
+    └── chunk_registry.pkl          # Fast chunk lookup
 ```
 
-### 2. Citations File (`document_citations.json`)
-
-Map of text positions to citation data:
+### Chunk File Format (`*_chunks.json`)
 
 ```json
-{
-  "line_42": {
-    "page": 14,
-    "line_start": 5,
-    "line_end": 5,
-    "bates": "INTEL_PROX_00001784",
-    "type": "transcript_line"
-  },
-  "line_43": {
-    "page": 14,
-    "line_start": 6,
-    "line_end": 6,
-    "bates": "INTEL_PROX_00001784",
-    "type": "transcript_line"
+[
+  {
+    "chunk_id": "document_chunk_0001",
+    "core_text": "Q. Can you describe the TWT technology...",
+    "pages": [14, 15],
+    "citation": {
+      "pdf_pages": [14, 15],
+      "transcript_lines": {"14": [5, 25], "15": [1, 12]}
+    },
+    "citation_string": "Alexander Dep. 14:5-15:12",
+    "key_quotes": ["Target Wake Time is a power-saving mechanism"],
+    "tokens": 487,
+    "doc_type": "deposition",
+    "summary": "Witness describes TWT power-saving technology.",
+    "category": "witness_statement",
+    "relevance_score": "high",
+    "claims_addressed": [1, 7],
+    "classification_method": "llm",
+    "llm_backend": "ollama"
   }
-}
+]
 ```
 
-### 3. Coverage Report
-
-Statistics on what citations were extracted:
+### Search Result Format
 
 ```
-Coverage Statistics:
-  pages: Found 50, Status: ✅ Good
-  line_numbers: Found 1250, Status: ✅ Good
-  bates: Found 50, Status: ✅ Good
-  citation_map_entries: 1250
+Result 1/10 (Score: 0.892)
+──────────────────────────────────────────────────────────────────────
+Document: daniel_alexander_10_24_2025
+Type: deposition
+Citation: Alexander Dep. 14:5-15:12
+Pages: 14, 15
+Enrichment: Category: witness_statement, Relevance: high, Claims: [1, 7]
+Summary: Witness describes TWT power-saving technology.
+Scores: BM25: 0.845, Semantic: 0.823, Reranker: 0.892
+
+Preview:
+"Q. Can you describe the TWT technology used in the accused products?
+A. Yes, Target Wake Time is a power-saving mechanism defined in the
+IEEE 802.11ax standard. It allows devices to negotiate specific wake..."
 ```
-
----
-
-## Interpreting Results
-
-### ✅ Good Coverage (>=80%)
-
-If coverage report shows:
-- ✅ Pages found
-- ✅ Type-specific markers (lines/columns/paragraphs) found
-- ✅ Many citation map entries
-
-**Next Step:** Proceed directly to Phase 3 (chunking). Phase 2 reconstruction may not be needed.
-
-### ⚠️ Medium Coverage (50-79%)
-
-If coverage report shows:
-- ✅ Pages found
-- ⚠️ Some type-specific markers missing
-- ⚠️ Moderate citation map entries
-
-**Next Step:** Try improving Phase 1 regex patterns first. If that doesn't help, implement Phase 2 reconstruction.
-
-### ❌ Low Coverage (<50%)
-
-If coverage report shows:
-- ⚠️ Few pages found
-- ❌ Most type-specific markers missing
-- ❌ Few citation map entries
-
-**Next Step:** Investigate conversion issues. May need to improve Phase 1 or implement Phase 2 reconstruction.
 
 ---
 
 ## Troubleshooting
 
-### Conversion Fails
+### ChromaDB / Vector Search Issues
 
-**Error:** `Docling conversion failed`
+**Error:** `pydantic.v1.errors.ConfigError`
+**Solution:** ChromaDB has compatibility issues with Python 3.14. Vector search will gracefully degrade to BM25-only mode.
+
+### Ollama Not Available
+
+**Error:** `Ollama not accessible`
 **Solution:**
-1. Check if Docling is installed: `pip install docling`
-2. Try updating: `pip install --upgrade docling`
-3. Check if file is corrupted: open manually
-4. Try fallback converter: rename to .txt and use textract
+1. Install Ollama from https://ollama.ai/
+2. Start Ollama service
+3. Pull required models: `ollama pull nomic-embed-text` and `ollama pull llama3.1:8b`
 
-### No Citations Found
+### Enrichment Backend Errors
 
-**Error:** `No page markers found`
+**Error:** `Enrichment backend 'anthropic' not available`
 **Solution:**
-1. Open output markdown file manually
-2. Check if page markers exist (search for "Page", "p.")
-3. If markers exist but not found, improve regex in `docling_converter.py`
-4. If no markers in source, document may need OCR or different handling
+1. Install anthropic SDK: `pip install anthropic`
+2. Set API key: `export ANTHROPIC_API_KEY="your-key"`
 
-### Import Errors
+### Reranker Not Available
 
-**Error:** `ModuleNotFoundError: No module named 'openpyxl'`
+**Error:** `Reranker not available`
 **Solution:**
-```bash
-pip install openpyxl extract-msg python-pptx textract
-```
-
-### Timeout Errors
-
-**Error:** `Conversion timeout (>5 minutes)`
-**Solution:**
-1. Document may be very large (>200 pages)
-2. Increase timeout in `docling_converter.py` (line 73)
-3. Consider splitting document into smaller files
+1. Install sentence-transformers: `pip install sentence-transformers`
+2. Reranking will gracefully degrade if not installed
 
 ---
 
-## Next Steps After Testing
+## Key Features
 
-### If Coverage is Good (>=80%)
+### ✅ Citation Tracking
+- Text-based depositions: 100% accuracy
+- Bates stamps: 99.8% coverage
+- Column detection (patents): 12.6% (improvement planned)
+- Paragraph numbers (reports): 0% (improvement planned)
 
-1. ✅ Skip Phase 2 (reconstruction not needed)
-2. ✅ Proceed to Phase 3: Chunking & Context Cards
-3. ✅ Start implementing `chunk_documents.py`
+### ✅ Search Capabilities
+- BM25 keyword search: <10ms queries
+- Semantic vector search: via Ollama embeddings
+- Hybrid search: RRF score fusion
+- Cross-encoder reranking: optional, requires sentence-transformers
 
-### If Coverage is Medium (50-79%)
-
-1. ⚠️ Iterate on Phase 1 to improve extraction
-2. ⚠️ Adjust regex patterns in converters
-3. ⚠️ Re-test after improvements
-4. ⚠️ If still not improved, implement Phase 2 reconstruction
-
-### If Coverage is Low (<50%)
-
-1. ❌ Investigate root cause (OCR needed? Format issue?)
-2. ❌ Implement Phase 2: Citation Reconstruction Script
-3. ❌ Re-test after reconstruction
+### ✅ LLM Enrichment
+- Three backends: Ollama (local), Anthropic (API), Claude Code (interactive)
+- Quote validation: only exact substrings kept
+- 14 valid categories for classification
+- Claims tracking with patent number filtering (>100)
 
 ---
 
-## Testing Checklist
+## Next Steps
 
-Before proceeding to Phase 3:
-
-**Basic Functionality:**
-- [ ] Can convert PDF to markdown
-- [ ] Can convert DOCX to markdown
-- [ ] Can convert Excel to markdown
-- [ ] Can convert email to markdown
-- [ ] Post-processing creates citations JSON
-- [ ] Coverage report generates successfully
-
-**Citation Extraction:**
-- [ ] Extracts page markers
-- [ ] Extracts Bates stamps (if present)
-- [ ] Extracts line numbers (for depositions)
-- [ ] Extracts column markers (for patents)
-- [ ] Extracts paragraph markers (for expert reports)
-
-**Quality:**
-- [ ] No garbage text from images in output
-- [ ] Citation markers are accurate
-- [ ] Markdown is readable
-- [ ] Citations JSON is valid JSON
-- [ ] Coverage report is accurate
-
-**Decision:**
-- [ ] Determined if Phase 2 is needed
-- [ ] Documented gaps (if any)
-- [ ] Clear path forward to Phase 3
+See [NEXT_STEPS.md](NEXT_STEPS.md) for:
+- Citation quality improvements (paragraph/column detection)
+- Production polish (unified CLI, config files)
+- Performance optimization (parallel processing, incremental indexing)
+- Quality assurance (benchmarks, end-to-end tests)
 
 ---
 
 ## Getting Help
 
-1. **Check Documentation:**
-   - `README.md` - Project overview
-   - `PHASE1_COMPLETE.md` - Phase 1 details
-   - `IMPLEMENTATION_STATUS.md` - Overall status
-   - `LITIGATION_DOCUMENT_PIPELINE_TRD.md` - Full technical spec
+**Documentation:**
+- [NEXT_STEPS.md](NEXT_STEPS.md) - Roadmap and remaining work
+- [CLAUDE.md](CLAUDE.md) - Implementation guidance
+- [README.md](README.md) - Project overview
 
-2. **Review Code:**
-   - `docling_converter.py` - Conversion logic
-   - `post_processor.py` - Cleaning logic
-   - `citation_types.py` - Data structures
+**Key Files:**
+- `run_pipeline.py` - Main pipeline runner
+- `lit_doc_retriever.py` - Search CLI
+- `llm_enrichment.py` - Enrichment module
+- `citation_tracker.py` - Citation extraction
+- `chunk_documents.py` - Chunking logic
 
-3. **Check Logs:**
-   - Conversion errors appear in stdout
-   - Check `test_output/` for intermediate files
-
----
-
-## Summary
-
-**Phase 1 is complete and ready for testing.**
-
-Run this to get started:
+**Tests:**
 ```bash
-python tests/test_phase1_citations.py /path/to/your/document.pdf
+.venv/bin/python -m pytest tests/ -v
 ```
-
-Review the output and decide:
-- ✅ Good coverage → Proceed to Phase 3
-- ⚠️ Medium coverage → Iterate on Phase 1 or implement Phase 2
-- ❌ Low coverage → Fix Phase 1 or implement Phase 2
-
-**Questions?** See `IMPLEMENTATION_STATUS.md` for full details.

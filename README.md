@@ -27,18 +27,30 @@ ollama pull nomic-embed-text    # 274MB
 ## Quick Start
 
 ```bash
-# Process documents
-doc-pipeline --input-dir litigation_docs/ --output-dir processed/
+# Process documents (with optional enrichment)
+python run_pipeline.py --input-dir tests/test_docs --output-dir output --enrich
 
-# Search
-doc-retrieve processed/ --query "witness testimony about TWT technology" --top-k 10
+# Build search index
+python lit_doc_retriever.py --index-dir output --build-index
+
+# Search with reranking
+python lit_doc_retriever.py --index-dir output \
+  --query "witness testimony about TWT technology" \
+  --rerank --top-k 10
 ```
 
 ## Project Status
 
-**Current Phase:** Implementation Phase 1 - Conversion & Citation Extraction
+**Current Status:** Phases 1-5 Complete ✅
 
-See [CLAUDE.md](CLAUDE.md) for implementation guidance and [LITIGATION_DOCUMENT_PIPELINE_TRD.md](LITIGATION_DOCUMENT_PIPELINE_TRD.md) for complete technical specification.
+- ✅ **Phase 1-2:** Citation tracking, chunking, post-processing
+- ✅ **Phase 3:** Hybrid search (BM25 + semantic vector)
+- ✅ **Phase 4:** Cross-encoder reranker
+- ✅ **Phase 5:** LLM enrichment (Ollama/Anthropic/Claude Code backends)
+
+**Test Coverage:** 109 tests (93 passing, 16 skipped)
+
+See [NEXT_STEPS.md](NEXT_STEPS.md) for remaining work and [CLAUDE.md](CLAUDE.md) for implementation guidance.
 
 ## License
 

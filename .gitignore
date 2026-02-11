@@ -51,3 +51,7 @@ chroma_db/
 # OS
 .DS_Store
 Thumbs.db
+
+# Generated indexes
+indexes/
+_Archive/

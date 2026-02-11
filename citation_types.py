@@ -129,3 +129,19 @@ class Chunk:
             "tokens": self.tokens,
             "doc_type": self.doc_type.value
         }
+
+
+@dataclass
+class SearchResult:
+    """
+    A search result with score and ranking information.
+
+    Used by hybrid retrieval to return chunks with relevance scores
+    from BM25, semantic search, or both.
+    """
+    chunk_id: str
+    chunk: Chunk
+    score: float
+    bm25_score: Optional[float] = None
+    semantic_score: Optional[float] = None
+    rank: int = 0

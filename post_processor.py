@@ -69,9 +69,10 @@ class PostProcessor:
         json_data = self._load_docling_json(md_path)
 
         if json_data:
-            # Extract footnotes for inline insertion (expert reports only)
-            if doc_type in (DocumentType.EXPERT_REPORT, DocumentType.PLEADING):
-                footnotes = self._extract_footnotes(json_data)
+            # Extract footnotes for inline insertion (all document types)
+            # Footnotes appear in expert reports, pleadings, briefs, court opinions, etc.
+            footnotes = self._extract_footnotes(json_data)
+            if footnotes:
                 logger.info("Detected %d footnotes for inline insertion", len(footnotes))
 
             # Extract text elements for marker insertion (all Docling docs)

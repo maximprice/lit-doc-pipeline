@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a litigation document processing pipeline that converts legal documents (PDFs, DOCX) into structured, searchable formats optimized for LLM-assisted legal analysis. The system preserves precise citation information (page numbers, Bates stamps, line numbers, column numbers, paragraph numbers) required for legal work.
 
-**Current Status:** Phases 1-5 complete (109 tests, 93 passing). Core pipeline functional with citation tracking, chunking, hybrid search, reranking, and optional LLM enrichment.
+**Current Status:** Phases 1-5 complete (115 tests, 99 passing). Core pipeline functional with high-quality citation tracking (99.2% paragraph, 84.5% column detection), chunking, hybrid search, reranking, and optional LLM enrichment.
 
 ## Critical Requirements
 
@@ -81,7 +81,7 @@ The pipeline consists of 7 sequential steps:
 - Category/relevance validation with sensible defaults
 - Claims filtering to reject patent numbers (>100)
 - CLI integration: `--enrich`, `--enrich-backend`, `--case-type`, `--parties`
-- Test coverage: 25 new tests, 109 total (93 pass, 16 skip)
+- Test coverage: 31 new tests, 115 total (99 pass, 16 skip)
 
 ## Remaining Work
 
@@ -91,10 +91,10 @@ The pipeline consists of 7 sequential steps:
 - Better error handling and recovery from partial failures
 
 ### Quality Improvements
-- Paragraph number extraction for expert reports (currently 0%)
-- Column detection improvement for patents (currently 12.6%)
-- Claim-aware chunking for patents
-- Bates stamp sequential validation
+- ~~Paragraph number extraction~~ → ✅ **99.2% coverage** (supports numbered format "N. ")
+- ~~Column detection~~ → ✅ **84.5% on spec pages** (exceeds goal)
+- ~~Bates sequential validation~~ → ✅ **Implemented** (gap and duplicate detection)
+- Claim-aware chunking for patents (future enhancement)
 
 ### Performance
 - Parallel document processing

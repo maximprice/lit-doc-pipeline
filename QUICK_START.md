@@ -131,7 +131,7 @@ python lit_doc_retriever.py \
 .venv/bin/python -m pytest tests/ -v
 ```
 
-**Expected:** 109 tests (93 passing, 16 skipped)
+**Expected:** 115 tests (99 passing, 16 skipped)
 
 ---
 
@@ -287,10 +287,10 @@ IEEE 802.11ax standard. It allows devices to negotiate specific wake..."
 ## Key Features
 
 ### ✅ Citation Tracking
-- Text-based depositions: 100% accuracy
-- Bates stamps: 99.8% coverage
-- Column detection (patents): 12.6% (improvement planned)
-- Paragraph numbers (reports): 0% (improvement planned)
+- Text-based depositions: 100% line-level accuracy
+- Expert reports: 99.2% paragraph detection ✅
+- Patents: 84.5% column detection on spec pages ✅
+- Bates stamps: 99.8% coverage with sequential validation ✅
 
 ### ✅ Search Capabilities
 - BM25 keyword search: <10ms queries

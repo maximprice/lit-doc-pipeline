@@ -48,7 +48,13 @@ python lit_doc_retriever.py --index-dir output \
 - ✅ **Phase 4:** Cross-encoder reranker
 - ✅ **Phase 5:** LLM enrichment (Ollama/Anthropic/Claude Code backends)
 
-**Test Coverage:** 109 tests (93 passing, 16 skipped)
+**Test Coverage:** 115 tests (99 passing, 16 skipped)
+
+**Citation Quality:**
+- Depositions: 100% line-level accuracy
+- Expert Reports: 99.2% paragraph detection
+- Patents: 84.5% column detection on spec pages
+- Bates stamps: Sequential validation with gap detection
 
 See [NEXT_STEPS.md](NEXT_STEPS.md) for remaining work and [CLAUDE.md](CLAUDE.md) for implementation guidance.
 

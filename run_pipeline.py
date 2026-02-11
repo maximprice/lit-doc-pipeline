@@ -69,14 +69,27 @@ def detect_doc_type(stem: str, conversion_citations: dict) -> DocumentType:
     return DocumentType.UNKNOWN
 
 
-def run_pipeline(input_dir: Path, output_dir: Path, use_existing: Path = None, cleanup_json: bool = True):
-    """Run steps 1-3 on all PDFs in input_dir.
+def run_pipeline(
+    input_dir: Path,
+    output_dir: Path,
+    use_existing: Path = None,
+    cleanup_json: bool = True,
+    enrich: bool = False,
+    enrich_backend: str = "ollama",
+    case_type: str = "patent",
+    parties: str = "",
+):
+    """Run steps 1-3 (+ optional enrichment) on all PDFs in input_dir.
 
     Args:
         input_dir: Directory containing PDF files
         output_dir: Directory for pipeline output
         use_existing: Path to existing converted files (skip Docling)
         cleanup_json: Delete large Docling JSON files after processing (default: True)
+        enrich: Whether to run LLM enrichment after chunking
+        enrich_backend: LLM backend for enrichment (ollama or anthropic)
+        case_type: Case type for enrichment context
+        parties: Comma-separated party names for enrichment context
     """
     converted_dir = output_dir / "converted"
     converted_dir.mkdir(parents=True, exist_ok=True)
@@ -244,6 +257,24 @@ def run_pipeline(input_dir: Path, output_dir: Path, use_existing: Path = None, c
             "type_distribution": metrics.type_distribution if metrics else {},
         })
 
+    # ── Step 4 (optional): LLM Enrichment ────────────────────────────
+    if enrich:
+        logger.info("=" * 60)
+        logger.info("[Step 4] LLM Enrichment (backend: %s)", enrich_backend)
+        from llm_enrichment import LLMEnricher, CaseContext
+
+        case_context = CaseContext(
+            case_type=case_type,
+            parties=[p.strip() for p in parties.split(",") if p.strip()] if parties else [],
+        )
+
+        enricher = LLMEnricher(backend=enrich_backend, delay_between_calls=0.1)
+        if enricher.is_available():
+            enrich_stats = enricher.enrich_directory(str(converted_dir), case_context)
+            logger.info("Enrichment complete: %s", enrich_stats.summary())
+        else:
+            logger.warning("Enrichment backend '%s' not available, skipping.", enrich_backend)
+
     # ── Summary ──────────────────────────────────────────────────────
     print("\n" + "=" * 60)
     print("PIPELINE SUMMARY")
@@ -285,6 +316,14 @@ def main():
                         help="Delete Docling JSON files after processing (default: True)")
     parser.add_argument("--no-cleanup-json", dest="cleanup_json", action="store_false",
                         help="Keep Docling JSON files after processing")
+    parser.add_argument("--enrich", action="store_true", default=False,
+                        help="Run LLM enrichment on chunks after processing")
+    parser.add_argument("--enrich-backend", choices=["ollama", "anthropic"], default="ollama",
+                        help="LLM backend for enrichment (default: ollama)")
+    parser.add_argument("--case-type", default="patent",
+                        help="Case type for enrichment context (default: patent)")
+    parser.add_argument("--parties", default="",
+                        help="Comma-separated party names for enrichment context")
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)
@@ -295,7 +334,14 @@ def main():
         logger.error("Input directory not found: %s", input_dir)
         sys.exit(1)
 
-    run_pipeline(input_dir, output_dir, use_existing, cleanup_json=args.cleanup_json)
+    run_pipeline(
+        input_dir, output_dir, use_existing,
+        cleanup_json=args.cleanup_json,
+        enrich=args.enrich,
+        enrich_backend=args.enrich_backend,
+        case_type=args.case_type,
+        parties=args.parties,
+    )
 
 
 if __name__ == "__main__":

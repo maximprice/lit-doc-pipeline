@@ -97,7 +97,13 @@ class HybridRetriever:
                         citation_string=chunk_data["citation_string"],
                         key_quotes=chunk_data.get("key_quotes", []),
                         tokens=chunk_data.get("tokens", 0),
-                        doc_type=DocumentType(chunk_data.get("doc_type", "unknown"))
+                        doc_type=DocumentType(chunk_data.get("doc_type", "unknown")),
+                        summary=chunk_data.get("summary"),
+                        category=chunk_data.get("category"),
+                        relevance_score=chunk_data.get("relevance_score"),
+                        claims_addressed=chunk_data.get("claims_addressed"),
+                        classification_method=chunk_data.get("classification_method"),
+                        llm_backend=chunk_data.get("llm_backend"),
                     )
                     self.chunks[chunk.chunk_id] = chunk
                     chunk_count += 1

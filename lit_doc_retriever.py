@@ -79,7 +79,13 @@ def build_indexes(output_dir: str, config_path: Optional[str] = None) -> None:
                     citation_string=chunk_data["citation_string"],
                     key_quotes=chunk_data.get("key_quotes", []),
                     tokens=chunk_data.get("tokens", 0),
-                    doc_type=DocumentType(chunk_data.get("doc_type", "unknown"))
+                    doc_type=DocumentType(chunk_data.get("doc_type", "unknown")),
+                    summary=chunk_data.get("summary"),
+                    category=chunk_data.get("category"),
+                    relevance_score=chunk_data.get("relevance_score"),
+                    claims_addressed=chunk_data.get("claims_addressed"),
+                    classification_method=chunk_data.get("classification_method"),
+                    llm_backend=chunk_data.get("llm_backend"),
                 )
                 chunks.append(chunk)
 
@@ -271,6 +277,19 @@ def search_and_display(
         print(f"Type: {chunk.doc_type.value if hasattr(chunk.doc_type, 'value') else chunk.doc_type}")
         print(f"Citation: {chunk.citation_string}")
         print(f"Pages: {', '.join(map(str, chunk.pages))}")
+
+        # Enrichment metadata
+        if chunk.category or chunk.relevance_score or chunk.summary:
+            enrichment_parts = []
+            if chunk.category:
+                enrichment_parts.append(f"Category: {chunk.category}")
+            if chunk.relevance_score:
+                enrichment_parts.append(f"Relevance: {chunk.relevance_score}")
+            if chunk.claims_addressed:
+                enrichment_parts.append(f"Claims: {chunk.claims_addressed}")
+            print(f"Enrichment: {', '.join(enrichment_parts)}")
+            if chunk.summary:
+                print(f"Summary: {chunk.summary}")
 
         # Scores
         if result.bm25_score is not None or result.semantic_score is not None or result.reranker_score is not None:

@@ -1,0 +1,23 @@
+{
+  "enrichment": {
+    "backend": "ollama",
+    "ollama": {
+      "model": "llama3.1:8b",
+      "url": "http://localhost:11434/api/generate",
+      "timeout_seconds": 120
+    },
+    "anthropic": {
+      "model": "claude-sonnet-4-20250514",
+      "max_tokens": 1024,
+      "max_retries": 3
+    },
+    "delay_between_calls": 0.1,
+    "force_re_enrich": false
+  },
+  "case_context": {
+    "case_type": "patent",
+    "parties": [],
+    "patents": [],
+    "claims_at_issue": []
+  }
+}

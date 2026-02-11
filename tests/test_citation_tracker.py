@@ -596,3 +596,116 @@ class TestPatentIntegration:
         # Should have Bates stamps
         bates_count = sum(1 for c in citations.values() if c.get("bates"))
         assert bates_count > 0, "No Bates stamps found"
+
+
+# ── New Tests for Citation Improvements ──────────────────────────────
+
+
+class TestNumberedParagraphDetection:
+    """Tests for numbered paragraph format (1. , 2. , 3. )."""
+
+    def test_numbered_paragraph_pattern(self):
+        """Detect numbered paragraphs like '1. I, Eric Cole...'"""
+        texts = [
+            make_text_elem("#/texts/0", "1. I, Eric Cole, have been asked...", 1, 50, 700, 550, 650),
+            make_text_elem("#/texts/1", "This is more content for paragraph 1.", 1, 50, 640, 550, 620),
+            make_text_elem("#/texts/2", "2. The details of my education...", 1, 50, 610, 550, 590),
+        ]
+
+        tracker = CitationTracker(
+            converted_dir=tempfile.mkdtemp(),
+            doc_type=DocumentType.EXPERT_REPORT
+        )
+        citations = tracker._handle_expert_report(texts, {0: "#/texts/0", 1: "#/texts/1", 2: "#/texts/2"}, {})
+
+        # First element should have paragraph 1
+        assert citations["#/texts/0"]["paragraph_number"] == 1
+        assert citations["#/texts/0"]["type"] == "paragraph"
+
+        # Second element should inherit paragraph 1
+        assert citations["#/texts/1"]["paragraph_number"] == 1
+
+        # Third element should have paragraph 2
+        assert citations["#/texts/2"]["paragraph_number"] == 2
+
+    def test_symbol_paragraph_still_works(self):
+        """Ensure ¶ symbol paragraphs still work."""
+        texts = [
+            make_text_elem("#/texts/0", "¶ 42. The technology enables...", 1, 50, 700, 550, 650),
+        ]
+
+        tracker = CitationTracker(
+            converted_dir=tempfile.mkdtemp(),
+            doc_type=DocumentType.EXPERT_REPORT
+        )
+        citations = tracker._handle_expert_report(texts, {0: "#/texts/0"}, {})
+
+        assert citations["#/texts/0"]["paragraph_number"] == 42
+        assert citations["#/texts/0"]["type"] == "paragraph"
+
+    def test_paragraph_word_format(self):
+        """Ensure 'Paragraph N' format still works."""
+        texts = [
+            make_text_elem("#/texts/0", "Paragraph 15. Background information...", 1, 50, 700, 550, 650),
+        ]
+
+        tracker = CitationTracker(
+            converted_dir=tempfile.mkdtemp(),
+            doc_type=DocumentType.EXPERT_REPORT
+        )
+        citations = tracker._handle_expert_report(texts, {0: "#/texts/0"}, {})
+
+        assert citations["#/texts/0"]["paragraph_number"] == 15
+
+
+class TestBatesSequentialValidation:
+    """Tests for Bates stamp sequential validation."""
+
+    def test_sequential_bates_no_gaps(self):
+        """Sequential Bates stamps should report no gaps."""
+        citations = {
+            "#/texts/0": {"page": 1, "bates": "INTEL_PROX_00001234", "type": "page_only"},
+            "#/texts/1": {"page": 2, "bates": "INTEL_PROX_00001235", "type": "page_only"},
+            "#/texts/2": {"page": 3, "bates": "INTEL_PROX_00001236", "type": "page_only"},
+        }
+
+        tracker = CitationTracker(
+            converted_dir=tempfile.mkdtemp(),
+            doc_type=DocumentType.PATENT
+        )
+        metrics = tracker.validate(citations)
+
+        assert len(metrics.bates_gaps) == 0
+        assert len(metrics.bates_duplicates) == 0
+
+    def test_bates_gap_detected(self):
+        """Large gap in Bates stamps should be flagged."""
+        citations = {
+            "#/texts/0": {"page": 1, "bates": "INTEL_PROX_00001234", "type": "page_only"},
+            "#/texts/1": {"page": 2, "bates": "INTEL_PROX_00001235", "type": "page_only"},
+            "#/texts/2": {"page": 3, "bates": "INTEL_PROX_00001250", "type": "page_only"},  # Gap of 15!
+        }
+
+        tracker = CitationTracker(
+            converted_dir=tempfile.mkdtemp(),
+            doc_type=DocumentType.PATENT
+        )
+        metrics = tracker.validate(citations)
+
+        assert len(metrics.bates_gaps) > 0
+        assert "gap" in metrics.bates_gaps[0].lower()
+
+    def test_bates_duplicates_detected(self):
+        """Multiple different Bates on same page should be flagged."""
+        citations = {
+            "#/texts/0": {"page": 1, "bates": "INTEL_PROX_00001234", "type": "page_only"},
+            "#/texts/1": {"page": 1, "bates": "INTEL_PROX_00001235", "type": "page_only"},  # Different Bates on same page
+        }
+
+        tracker = CitationTracker(
+            converted_dir=tempfile.mkdtemp(),
+            doc_type=DocumentType.PATENT
+        )
+        metrics = tracker.validate(citations)
+
+        assert len(metrics.bates_duplicates) > 0

@@ -60,6 +60,8 @@ class ValidationMetrics:
     has_bates: bool = False
     type_distribution: Dict[str, int] = field(default_factory=dict)
     line_gaps: List[str] = field(default_factory=list)
+    bates_gaps: List[str] = field(default_factory=list)
+    bates_duplicates: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -70,6 +72,8 @@ class ValidationMetrics:
             "has_bates": self.has_bates,
             "type_distribution": self.type_distribution,
             "line_gaps": self.line_gaps,
+            "bates_gaps": self.bates_gaps,
+            "bates_duplicates": self.bates_duplicates,
         }
 
 
@@ -137,6 +141,10 @@ class CitationTracker:
         )
         if metrics.line_gaps:
             logger.warning("Line gaps detected: %s", metrics.line_gaps[:5])
+        if metrics.bates_gaps:
+            logger.warning("Bates stamp gaps detected: %s", metrics.bates_gaps[:5])
+        if metrics.bates_duplicates:
+            logger.warning("Bates stamp duplicates detected: %s", metrics.bates_duplicates[:5])
 
         return citations
 
@@ -631,9 +639,13 @@ class CitationTracker:
         citations: Dict[str, dict] = {}
         current_paragraph: Optional[int] = None
 
-        para_pattern = re.compile(
-            r"(?:^|\s)(?:[¶§]\s*(\d+)|[Pp]aragraph\s+(\d+))"
-        )
+        # Patterns for paragraph markers (in priority order):
+        # 1. ¶ N or § N (symbol-based)
+        # 2. "Paragraph N" (word-based)
+        # 3. "N. " at start of text (numbered paragraphs)
+        symbol_pattern = re.compile(r"(?:^|\s)([¶§])\s*(\d+)")
+        word_pattern = re.compile(r"(?:^|\s)[Pp]aragraph\s+(\d+)")
+        numbered_pattern = re.compile(r"^(\d+)\.\s+[A-Z]")  # "1. " at start with capital letter
 
         for i, t in enumerate(texts):
             if self._is_skippable(t):
@@ -646,12 +658,32 @@ class CitationTracker:
             self_ref = self_ref_map.get(i, f"#/texts/{i}")
             text = t.get("text", "")
 
-            # Check for paragraph markers
-            match = para_pattern.search(text)
+            # Check for paragraph markers (priority order)
+            para_num = None
+
+            # Try symbol pattern first (¶ N, § N)
+            match = symbol_pattern.search(text)
             if match:
-                para_num = match.group(1) or match.group(2)
-                if para_num:
-                    current_paragraph = int(para_num)
+                para_num = int(match.group(2))
+
+            # Try word pattern (Paragraph N)
+            if para_num is None:
+                match = word_pattern.search(text)
+                if match:
+                    para_num = int(match.group(1))
+
+            # Try numbered paragraph pattern (N. )
+            # Only update if it's a reasonable increment (not a list or subsection)
+            if para_num is None:
+                match = numbered_pattern.match(text)
+                if match:
+                    candidate = int(match.group(1))
+                    # Accept if: first paragraph OR reasonable increment from previous
+                    if current_paragraph is None or (1 <= candidate <= 200 and candidate >= current_paragraph):
+                        para_num = candidate
+
+            if para_num is not None:
+                current_paragraph = para_num
 
             bates = self._associate_bates(page_no, bates_by_page)
 
@@ -734,6 +766,43 @@ class CitationTracker:
                     if gap > 5:
                         line_gaps.append(f"Page {pg}: gap {lines[j]}->{lines[j+1]}")
 
+        # Check for Bates stamp sequential validation
+        bates_gaps = []
+        bates_duplicates = []
+        if has_bates:
+            bates_by_page: Dict[int, str] = {}
+            for cit in citations.values():
+                page = cit.get("page")
+                bates = cit.get("bates")
+                if page and bates:
+                    if page in bates_by_page:
+                        if bates_by_page[page] != bates:
+                            bates_duplicates.append(f"Page {page}: multiple Bates stamps")
+                    else:
+                        bates_by_page[page] = bates
+
+            # Extract numeric suffix from Bates stamps and check for gaps
+            bates_numbers = {}
+            for page, bates in sorted(bates_by_page.items()):
+                # Try to extract numeric suffix
+                match = re.search(r'(\d{5,})$', bates)
+                if match:
+                    bates_numbers[page] = int(match.group(1))
+
+            # Check for sequential gaps
+            if len(bates_numbers) >= 2:
+                pages = sorted(bates_numbers.keys())
+                for j in range(len(pages) - 1):
+                    p1, p2 = pages[j], pages[j + 1]
+                    b1, b2 = bates_numbers[p1], bates_numbers[p2]
+                    expected_gap = p2 - p1
+                    actual_gap = b2 - b1
+                    # Allow for single-page increments (b2 = b1 + 1)
+                    if actual_gap > expected_gap + 5:
+                        bates_gaps.append(
+                            f"Pages {p1}-{p2}: Bates {b1}->{b2} (gap: {actual_gap - expected_gap})"
+                        )
+
         # Coverage = % of items with at least line_start or paragraph_number or column
         items_with_detail = sum(
             1
@@ -752,6 +821,8 @@ class CitationTracker:
             has_bates=has_bates,
             type_distribution=dict(type_counter),
             line_gaps=line_gaps,
+            bates_gaps=bates_gaps,
+            bates_duplicates=bates_duplicates,
         )
 
 

@@ -21,14 +21,16 @@ class DoclingConverter:
     Extract citations directly from conversion process.
     """
 
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(self, config: Optional[Dict] = None, timeout: int = 300):
         """
         Initialize converter with configuration.
 
         Args:
             config: Configuration dict with docling settings
+            timeout: Timeout in seconds for document conversion (default: 300)
         """
         self.config = config or self._default_config()
+        self.timeout = timeout
 
         # Citation patterns
         self.page_pattern = re.compile(r'(?:Page|p\.)\s+(\d+)', re.IGNORECASE)
@@ -89,7 +91,7 @@ class DoclingConverter:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300  # 5 minute timeout
+                timeout=self.timeout
             )
 
             if result.returncode != 0:
@@ -106,7 +108,7 @@ class DoclingConverter:
                 md_path="",
                 citations_found={},
                 needs_reconstruction=True,
-                errors=["Conversion timeout (>5 minutes)"]
+                errors=[f"Conversion timeout (>{self.timeout} seconds)"]
             )
         except Exception as e:
             return ConversionResult(

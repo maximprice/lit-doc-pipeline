@@ -154,8 +154,11 @@
 
 ### Error Handling
 - [x] Graceful degradation for missing dependencies (ChromaDB, sentence-transformers)
-- [ ] Better timeout handling for long OCR jobs
-- [ ] Recovery from partial pipeline failures
+- [x] Better timeout handling for long OCR jobs (configurable --conversion-timeout)
+- [x] Recovery from partial pipeline failures (checkpoint/resume with .lit-pipeline-state.json)
+- [x] Try-catch blocks around each pipeline stage
+- [x] Automatic retry limiting (max 3 attempts per document)
+- [x] --resume, --force, --no-skip-failed flags
 
 ---
 

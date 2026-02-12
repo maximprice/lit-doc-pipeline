@@ -9,6 +9,7 @@ A Python-based system for converting legal documents (PDFs, DOCX, etc.) into str
 - **Hybrid Search**: BM25 + semantic vector search with optional cross-encoder reranking
 - **Configurable Pipeline**: JSON/YAML config files for all pipeline parameters
 - **LLM Enrichment**: Optional summaries and categorization
+- **Robust Error Handling**: Checkpoint/resume, automatic retry limiting, graceful failure handling
 
 ## Installation
 
@@ -30,8 +31,14 @@ ollama pull nomic-embed-text    # 274MB
 # Process documents
 lit-pipeline process tests/test_docs output/
 
+# Resume after interruption
+lit-pipeline process tests/test_docs output/ --resume
+
 # Process with enrichment
 lit-pipeline process tests/test_docs output/ --enrich --case-type patent
+
+# Process large documents with extended timeout
+lit-pipeline process large_docs/ output/ --conversion-timeout 600
 
 # Build search index
 lit-pipeline index output/
@@ -91,6 +98,7 @@ The benchmark measures Precision@K, hit rate, and per-query latency across BM25-
 **Documentation:**
 - [QUICK_START.md](QUICK_START.md) - Getting started guide
 - [ARCHITECTURE.md](ARCHITECTURE.md) - Technical architecture and design
+- [ERROR_HANDLING.md](ERROR_HANDLING.md) - Error handling & recovery guide
 - [NEXT_STEPS.md](NEXT_STEPS.md) - Roadmap and remaining work
 - [CLAUDE.md](CLAUDE.md) - Implementation guidance
 

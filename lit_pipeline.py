@@ -46,6 +46,10 @@ def cmd_process(args):
         enrich_backend=args.enrich_backend,
         case_type=args.case_type,
         parties=args.parties,
+        resume=getattr(args, 'resume', False),
+        force=getattr(args, 'force', False),
+        skip_failed=getattr(args, 'skip_failed', True),
+        conversion_timeout=getattr(args, 'conversion_timeout', 300),
     )
 
 
@@ -197,6 +201,29 @@ Examples:
         "--parties",
         default="",
         help="Comma-separated party names for enrichment"
+    )
+    process_parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from previous run (skip already-completed documents)"
+    )
+    process_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force reprocessing even if stages already complete"
+    )
+    process_parser.add_argument(
+        "--no-skip-failed",
+        dest="skip_failed",
+        action="store_false",
+        default=True,
+        help="Retry documents that have failed multiple times"
+    )
+    process_parser.add_argument(
+        "--conversion-timeout",
+        type=int,
+        default=300,
+        help="Timeout in seconds for document conversion (default: 300)"
     )
 
     # ── Index command ────────────────────────────────────────────────────

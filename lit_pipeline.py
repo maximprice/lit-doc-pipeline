@@ -50,6 +50,8 @@ def cmd_process(args):
         force=getattr(args, 'force', False),
         skip_failed=getattr(args, 'skip_failed', True),
         conversion_timeout=getattr(args, 'conversion_timeout', 300),
+        parallel=getattr(args, 'parallel', False),
+        max_workers=getattr(args, 'max_workers', None),
     )
 
 
@@ -59,8 +61,9 @@ def cmd_index(args):
 
     output_dir = args.output_dir
     config_path = args.config
+    force = getattr(args, 'force_rebuild', False)
 
-    build_indexes(output_dir, config_path)
+    build_indexes(output_dir, config_path, force=force)
 
 
 def cmd_search(args):
@@ -225,6 +228,17 @@ Examples:
         default=300,
         help="Timeout in seconds for document conversion (default: 300)"
     )
+    process_parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Enable parallel processing of documents"
+    )
+    process_parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help="Number of parallel workers (default: cpu_count - 1)"
+    )
 
     # ── Index command ────────────────────────────────────────────────────
     index_parser = subparsers.add_parser(
@@ -239,6 +253,11 @@ Examples:
     index_parser.add_argument(
         "--config",
         help="Path to retrieval config JSON"
+    )
+    index_parser.add_argument(
+        "--force-rebuild",
+        action="store_true",
+        help="Force rebuild all indexes (ignore incremental state)"
     )
 
     # ── Search command ───────────────────────────────────────────────────

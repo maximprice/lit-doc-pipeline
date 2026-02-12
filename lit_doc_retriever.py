@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from citation_types import Chunk, DocumentType
+from index_state import IndexState
 
 # Delay imports to avoid chromadb import issues
 def _import_indexers():
@@ -129,7 +130,32 @@ def build_indexes(output_dir: str, config_path: Optional[str] = None) -> None:
         logger.warning("Ollama not available, skipping vector index")
         logger.warning("Semantic search will not be available")
 
-    # Save metadata
+    # Update index state for each processed file
+    for chunk_file in chunk_files:
+        file_hash = IndexState.compute_file_hash(chunk_file)
+        file_chunks = [c for c in chunks if c.chunk_id.startswith(chunk_file.stem)]
+
+        index_types = ["bm25"]
+        if vector_indexer.is_available():
+            index_types.append("vector")
+
+        index_state.add_document(
+            filename=chunk_file.name,
+            file_path=str(chunk_file.relative_to(output_path)),
+            content_hash=file_hash,
+            chunk_count=len(file_chunks),
+            index_types=index_types,
+        )
+
+    # Update index paths
+    index_state.bm25_index_path = "indexes/bm25_index.pkl"
+    if vector_indexer.is_available():
+        index_state.vector_index_path = "indexes/chroma_db"
+
+    # Save index state
+    index_state.save()
+
+    # Save metadata (legacy)
     metadata = {
         "num_chunks": len(chunks),
         "num_documents": len(chunk_files),
@@ -143,6 +169,7 @@ def build_indexes(output_dir: str, config_path: Optional[str] = None) -> None:
         json.dump(metadata, f, indent=2)
 
     logger.info(f"\nIndexes saved to {index_dir}")
+    logger.info(index_state.summary())
     logger.info("Build complete!")
 
 

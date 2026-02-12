@@ -20,6 +20,7 @@ from pathlib import Path
 from citation_tracker import CitationTracker
 from citation_types import DocumentType
 from docling_converter import DoclingConverter
+from parallel_processor import process_documents_parallel, get_optimal_worker_count
 from pipeline_state import PipelineState
 from post_processor import PostProcessor
 from pymupdf_extractor import is_text_based_pdf, extract_deposition
@@ -84,6 +85,8 @@ def run_pipeline(
     force: bool = False,
     skip_failed: bool = True,
     conversion_timeout: int = 300,
+    parallel: bool = False,
+    max_workers: int = None,
 ):
     """Run steps 1-3 (+ optional enrichment) on all PDFs in input_dir.
 
@@ -100,6 +103,8 @@ def run_pipeline(
         force: Force reprocessing even if stage already complete
         skip_failed: Skip documents that have failed multiple times
         conversion_timeout: Timeout in seconds for document conversion (default: 300)
+        parallel: Enable parallel processing of documents
+        max_workers: Number of parallel workers (default: cpu_count - 1)
     """
     converted_dir = output_dir / "converted"
     converted_dir.mkdir(parents=True, exist_ok=True)
@@ -117,7 +122,38 @@ def run_pipeline(
         sys.exit(1)
 
     logger.info("Found %d PDF files in %s", len(pdfs), input_dir)
-    results = []
+
+    # Check if parallel processing is requested
+    if parallel:
+        if max_workers is None:
+            max_workers = get_optimal_worker_count()
+
+        logger.info("Using parallel processing with %d workers", max_workers)
+
+        # Build normalized stems map
+        normalized_stems = {pdf.stem: normalize_stem(pdf.stem) for pdf in pdfs}
+
+        # Process documents in parallel
+        results = process_documents_parallel(
+            pdfs=pdfs,
+            output_dir=output_dir,
+            normalized_stems=normalized_stems,
+            known_doc_types=KNOWN_DOC_TYPES,
+            state=state,
+            conversion_timeout=conversion_timeout,
+            cleanup_json=cleanup_json,
+            use_existing=use_existing,
+            max_workers=max_workers,
+            force=force,
+            skip_failed=skip_failed,
+        )
+
+        # Skip to enrichment step
+        logger.info("Parallel processing complete")
+
+    else:
+        # Sequential processing (original code)
+        results = []
 
     for pdf_path in pdfs:
         stem = pdf_path.stem
@@ -537,6 +573,10 @@ Examples:
                         help="Retry documents that have failed multiple times")
     parser.add_argument("--conversion-timeout", type=int, default=300,
                         help="Timeout in seconds for document conversion (default: 300)")
+    parser.add_argument("--parallel", action="store_true", default=False,
+                        help="Enable parallel processing of documents")
+    parser.add_argument("--max-workers", type=int, default=None,
+                        help="Number of parallel workers (default: cpu_count - 1)")
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)
@@ -558,6 +598,8 @@ Examples:
         force=args.force,
         skip_failed=args.skip_failed,
         conversion_timeout=args.conversion_timeout,
+        parallel=args.parallel,
+        max_workers=args.max_workers,
     )
 
 

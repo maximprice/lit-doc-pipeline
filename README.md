@@ -7,7 +7,7 @@ A Python-based system for converting legal documents (PDFs, DOCX, etc.) into str
 - **Accurate Citation Tracking**: Preserves page:line, column:line, and paragraph citations
 - **Multi-Format Support**: PDF, DOCX, XLSX, EML, MSG, PPTX
 - **Hybrid Search**: BM25 + semantic vector search with optional cross-encoder reranking
-- **Incremental Indexing**: Add new documents without rebuilding entire corpus
+- **Configurable Pipeline**: JSON/YAML config files for all pipeline parameters
 - **LLM Enrichment**: Optional summaries and categorization
 
 ## Installation

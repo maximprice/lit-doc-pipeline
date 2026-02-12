@@ -81,7 +81,7 @@ The pipeline consists of 7 sequential steps:
 - Category/relevance validation with sensible defaults
 - Claims filtering to reject patent numbers (>100)
 - CLI integration: `--enrich`, `--enrich-backend`, `--case-type`, `--parties`
-- Test coverage: 31 new tests, 115 total (99 pass, 16 skip)
+- Test coverage: 153 total (137 pass, 16 skip)
 
 ## Remaining Work
 
@@ -116,20 +116,24 @@ docling \
   <input_file>
 ```
 
-### Expected CLI (Not Yet Implemented)
+### CLI Usage
 ```bash
 # Full pipeline
-doc-pipeline \
-  --input-dir litigation_docs/ \
-  --output-dir processed/ \
+.venv/bin/python lit_pipeline.py process \
+  tests/test_docs output/ \
   --case-type patent \
   --cleanup-json
 
 # Search
-doc-retrieve processed/ \
-  --query "TWT technology" \
+.venv/bin/python lit_pipeline.py search \
+  output/ "TWT technology" \
   --rerank \
   --top-k 10
+
+# Build indexes, show stats, enrich
+.venv/bin/python lit_pipeline.py index output/
+.venv/bin/python lit_pipeline.py stats output/
+.venv/bin/python lit_pipeline.py enrich output/converted/ --backend ollama
 ```
 
 ## Key Data Structures
@@ -170,7 +174,7 @@ doc-retrieve processed/ \
 
 ## Common Pitfalls to Avoid
 
-1. **NEVER strip line numbers before extracting them** - Current post-processor has this bug at lines 198-200
+1. **NEVER strip line numbers before extracting them** - Extract citations before any text cleaning
 2. **NEVER split Q&A pairs when chunking depositions** - Implement deposition-aware chunking
 3. **NEVER assume key quotes from LLM are verbatim** - Always validate with exact substring match
 4. **NEVER confuse patent numbers (7+ digits) with claim numbers (1-2 digits)**
@@ -222,13 +226,14 @@ ollama pull nomic-embed-text    # 274MB
 ollama pull llama3.1:8b          # 4.7GB
 ```
 
-## File Structure (Target)
+## File Structure
 
 ```
 lit-doc-pipeline/
 ├── lit_pipeline.py            # Unified CLI entry point (5 subcommands)
 ├── run_pipeline.py            # Pipeline orchestration (steps 1-5)
 ├── config_loader.py           # JSON/YAML config support
+├── docling_converter.py       # PDF/DOCX conversion via Docling
 ├── citation_tracker.py        # Citation reconstruction from Docling JSON
 ├── citation_types.py          # Data structures (Chunk, SearchResult, etc.)
 ├── pymupdf_extractor.py       # Fast path for text-based depositions
@@ -244,16 +249,19 @@ lit-doc-pipeline/
 ├── benchmark.py               # Search quality benchmark (Precision@K)
 ├── configs/
 │   ├── default_config.json
-│   └── retrieval_config.json
+│   ├── retrieval_config.json
+│   └── enrichment_config.json
 ├── tests/
 │   ├── test_citation_tracker.py
 │   ├── test_chunk_documents.py
 │   ├── test_bm25_indexer.py
 │   ├── test_hybrid_retriever.py
 │   ├── test_reranker.py
+│   ├── test_regression.py
 │   ├── test_llm_enrichment.py
 │   └── ...
-└── LITIGATION_DOCUMENT_PIPELINE_TRD.md
+└── _Archive/
+    └── LITIGATION_DOCUMENT_PIPELINE_TRD.md
 ```
 
 ## Testing Strategy
@@ -295,7 +303,7 @@ lit-doc-pipeline/
 
 ## Reference Documents
 
-- Complete specification: `LITIGATION_DOCUMENT_PIPELINE_TRD.md`
+- Complete specification: `_Archive/LITIGATION_DOCUMENT_PIPELINE_TRD.md`
 - See Section 4 for citation tracking algorithms
 - See Section 9.4 for LLM enrichment validation
 - See Section 11 for known issues and critical fixes

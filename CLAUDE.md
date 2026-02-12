@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a litigation document processing pipeline that converts legal documents (PDFs, DOCX) into structured, searchable formats optimized for LLM-assisted legal analysis. The system preserves precise citation information (page numbers, Bates stamps, line numbers, column numbers, paragraph numbers) required for legal work.
 
-**Current Status:** Phases 1-5 complete (115 tests, 99 passing). Core pipeline functional with high-quality citation tracking (99.2% paragraph, 84.5% column detection), chunking, hybrid search, reranking, and optional LLM enrichment.
+**Current Status:** Phases 1-5 complete (153 tests, 137 passing). Core pipeline functional with high-quality citation tracking (99.2% paragraph, 84.5% column detection), chunking, hybrid search, reranking, and optional LLM enrichment. Benchmark: 98% Precision@5 across 20 queries.
 
 ## Critical Requirements
 
@@ -85,9 +85,10 @@ The pipeline consists of 7 sequential steps:
 
 ## Remaining Work
 
-### Production Readiness
-- Unified CLI entry point (`lit-pipeline` command)
-- Config file support for pipeline parameters
+### Production Readiness ✅ COMPLETE
+- ✅ Unified CLI entry point (`lit_pipeline.py` with 5 subcommands)
+- ✅ Config file support (`config_loader.py`, JSON/YAML)
+- ✅ Benchmark script (`benchmark.py`, 20 queries, Precision@5 + latency)
 - Better error handling and recovery from partial failures
 
 ### Quality Improvements
@@ -208,10 +209,10 @@ chromadb>=0.4.0              # Vector store
 numpy>=2.0.0                 # Numerical ops
 ```
 
-### Optional Dependencies
+### Optional Dependencies (Installed)
 ```
-sentence-transformers>=3.0.0  # Cross-encoder reranking
-anthropic>=0.40.0             # Claude API for enrichment
+sentence-transformers>=3.0.0  # Cross-encoder reranking (installed: 5.2.2)
+anthropic>=0.40.0             # Claude API for enrichment (installed: 0.46.0)
 ```
 
 ### External Services (Optional)
@@ -225,19 +226,33 @@ ollama pull llama3.1:8b          # 4.7GB
 
 ```
 lit-doc-pipeline/
-├── lit_doc_pipeline.py        # Main pipeline
-├── citation_tracker.py         # NEW: Citation reconstruction
-├── post_processor.py           # Text cleaning
-├── chunk_documents.py         # Chunking logic
-├── generate_context_cards.py # Card generation
-├── lit_doc_retriever.py       # Hybrid search + reranker
-├── llm_enrichment.py          # LLM enrichment
+├── lit_pipeline.py            # Unified CLI entry point (5 subcommands)
+├── run_pipeline.py            # Pipeline orchestration (steps 1-5)
+├── config_loader.py           # JSON/YAML config support
+├── citation_tracker.py        # Citation reconstruction from Docling JSON
+├── citation_types.py          # Data structures (Chunk, SearchResult, etc.)
+├── pymupdf_extractor.py       # Fast path for text-based depositions
+├── format_handlers.py         # Document type detection
+├── post_processor.py          # Text cleaning + footnote insertion
+├── chunk_documents.py         # Section-aware chunking
+├── bm25_indexer.py            # TF-IDF keyword search
+├── vector_indexer.py          # ChromaDB + Ollama embeddings
+├── hybrid_retriever.py        # RRF score fusion
+├── reranker.py                # Cross-encoder reranking
+├── lit_doc_retriever.py       # Legacy search CLI
+├── llm_enrichment.py          # LLM enrichment (3 backends)
+├── benchmark.py               # Search quality benchmark (Precision@K)
 ├── configs/
-│   └── default_config.json
+│   ├── default_config.json
+│   └── retrieval_config.json
 ├── tests/
-│   ├── test_citation_tracking.py
-│   ├── test_chunking.py
-│   └── test_retriever.py
+│   ├── test_citation_tracker.py
+│   ├── test_chunk_documents.py
+│   ├── test_bm25_indexer.py
+│   ├── test_hybrid_retriever.py
+│   ├── test_reranker.py
+│   ├── test_llm_enrichment.py
+│   └── ...
 └── LITIGATION_DOCUMENT_PIPELINE_TRD.md
 ```
 
@@ -269,6 +284,14 @@ lit-doc-pipeline/
 - **Processing Speed:** < 5 minutes per 100 pages
 - **False Positive Rate:** < 10% for keyword categorization
 - **Storage Efficiency:** < 500 MB per 1,000 pages (with cleanup-json)
+
+### Benchmark Results (as of 2026-02-11)
+- **BM25 Precision@5:** 98.0% (20 queries, 56-chunk corpus)
+- **BM25+Rerank Precision@5:** 98.0% (cross-encoder ms-marco-MiniLM-L-6-v2)
+- **Hit Rate:** 100% (both modes)
+- **BM25 Latency:** <1ms per query
+- **Rerank Latency:** ~443ms mean, 601ms P95
+- Run `benchmark.py` to reproduce
 
 ## Reference Documents
 

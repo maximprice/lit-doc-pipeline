@@ -54,13 +54,39 @@ lit-pipeline stats output/
 - ✅ **Phase 4:** Cross-encoder reranker
 - ✅ **Phase 5:** LLM enrichment (Ollama/Anthropic/Claude Code backends)
 
-**Test Coverage:** 115 tests (99 passing, 16 skipped)
+**Test Coverage:** 153 tests (137 passing, 16 skipped)
 
 **Citation Quality:**
 - Depositions: 100% line-level accuracy
 - Expert Reports: 99.2% paragraph detection
 - Patents: 84.5% column detection on spec pages
 - Bates stamps: Sequential validation with gap detection
+
+**Search Quality (Benchmark):**
+- BM25 Precision@5: 98.0% (20 queries, 56-chunk corpus)
+- BM25+Rerank Precision@5: 98.0% (cross-encoder `ms-marco-MiniLM-L-6-v2`)
+- Hit Rate: 100% (at least one relevant result in every top-5)
+- BM25 Latency: <1ms | Rerank Latency: ~443ms
+
+## Benchmarking
+
+Run the search quality benchmark against the test corpus:
+
+```bash
+# Default: 20 queries, Precision@5, BM25 vs BM25+Rerank
+.venv/bin/python benchmark.py
+
+# Custom top-K
+.venv/bin/python benchmark.py --top-k 10
+
+# Custom chunks directory
+.venv/bin/python benchmark.py --chunks-dir path/to/chunks
+
+# Save detailed JSON results
+.venv/bin/python benchmark.py --output results.json
+```
+
+The benchmark measures Precision@K, hit rate, and per-query latency across BM25-only and BM25+Rerank modes. Results are saved to `benchmark_results.json`.
 
 **Documentation:**
 - [QUICK_START.md](QUICK_START.md) - Getting started guide

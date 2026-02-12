@@ -31,6 +31,8 @@ test_docs/
 .pytest_cache/
 .coverage
 htmlcov/
+tests/*/TEST_RUN_SUMMARY.md
+tests/*_test_*/
 
 # IDE
 .vscode/

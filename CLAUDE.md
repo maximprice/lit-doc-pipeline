@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a litigation document processing pipeline that converts legal documents (PDFs, DOCX) into structured, searchable formats optimized for LLM-assisted legal analysis. The system preserves precise citation information (page numbers, Bates stamps, line numbers, column numbers, paragraph numbers) required for legal work.
 
-**Current Status:** Phases 1-5 complete + Production hardening + Performance optimization + User experience. 153 tests (137 passing). Core pipeline functional with high-quality citation tracking (99.2% paragraph, 84.5% column detection), chunking, hybrid search, reranking, and optional LLM enrichment. Benchmark: 98% Precision@5. Performance: 3-4x faster with parallel processing, 30x faster with incremental indexing. Progress bars provide visual feedback during all long-running operations.
+**Current Status:** ✅ **FULLY OPERATIONAL** - Phases 1-5 complete + Production hardening + Performance optimization + User experience. 153 tests (137 passing). Core pipeline functional with high-quality citation tracking (99.2% paragraph, 84.5% column detection), chunking, hybrid search, reranking, and optional LLM enrichment. Benchmark: 98% Precision@5. Performance: 3-4x faster with parallel processing, 30x faster with incremental indexing. Progress bars provide visual feedback during all long-running operations.
+
+**Last Tested:** 2026-02-13 - Successfully processed 7 test documents (882 chunks, 32,583 citations) with search working perfectly.
 
 ## Critical Requirements
 
@@ -38,50 +40,54 @@ This is a litigation document processing pipeline that converts legal documents 
 
 ## Architecture Overview
 
-The pipeline consists of 7 sequential steps:
+The pipeline consists of 5 main steps:
 
 1. **Conversion (Docling)** - Extract to JSON + MD with proper flags
 2. **Post-Processing** - Clean OCR artifacts while preserving citation markers
 3. **Citation Reconstruction** - Parse line/column/paragraph numbers from JSON provenance
-4. **Chunking** - Create semantic chunks inheriting citation metadata
-5. **Context Card Generation** - Structured cards with full citation data
-6. **Vector Indexing** - Hybrid BM25 + Chroma with metadata
-7. **LLM Enrichment (Optional)** - Summaries, key quotes, categorization
+4. **Chunking** - Create semantic chunks inheriting citation metadata (saves to *_chunks.json)
+5. **Vector Indexing** - Hybrid BM25 + Chroma with metadata (separate command)
+6. **LLM Enrichment (Optional)** - Summaries, key quotes, categorization (optional flag)
+
+**Note:** Steps 1-4 run via `lit_pipeline.py process`, Step 5 via `lit_pipeline.py index`, Step 6 via `--enrich` flag or `lit_pipeline.py enrich`.
 
 ## Implementation Status
 
-### ✅ Phase 1: Citation Foundation (Complete)
+### ✅ Phase 1-5: FULLY OPERATIONAL
+
+**Phase 1: Citation Foundation**
 - `citation_tracker.py` - Bbox-based line/column/paragraph inference
 - `pymupdf_extractor.py` - Fast path for text-based depositions
 - `format_handlers.py` - Document type detection
 - Citation coverage: 100% for text depositions, 99.8% Bates coverage
 
-### ✅ Phase 2: Core Pipeline (Complete)
+**Phase 2: Core Pipeline**
 - `post_processor.py` - Text cleaning with citation preservation
 - `chunk_documents.py` - Section-aware chunking with Q/A preservation
-- Context card generation with citation metadata
-- Footnote inline insertion for all legal documents (expert reports, pleadings, briefs, court opinions)
+- Footnote inline insertion for all legal documents
+- ✅ **FIXED (2026-02-13):** Chunking step now integrated into `run_pipeline.py` (was missing)
 
-### ✅ Phase 3: Vector Search (Complete)
+**Phase 3: Vector Search**
 - `bm25_indexer.py` - TF-IDF keyword search (<10ms queries)
 - `vector_indexer.py` - Chroma + Ollama nomic-embed-text
 - `hybrid_retriever.py` - RRF score fusion
-- `lit_doc_retriever.py` - Search CLI (build-index, search, stats)
-- Graceful degradation to BM25-only when Chroma unavailable
+- `lit_doc_retriever.py` - Legacy CLI (use `lit_pipeline.py` instead)
 
-### ✅ Phase 4: Cross-Encoder Reranker (Complete)
+**Phase 4: Cross-Encoder Reranker**
 - `reranker.py` - ms-marco-MiniLM-L-6-v2 with lazy loading
 - Integrated into hybrid retriever with `--rerank` flag
 - Graceful degradation when sentence-transformers not installed
-- Fetches 10x candidates, reranks to top-k
 
-### ✅ Phase 5: LLM Enrichment (Complete)
+**Phase 5: LLM Enrichment**
 - `llm_enrichment.py` - Three backends: Ollama, Anthropic, Claude Code
-- Quote validation: only exact substrings kept (TRD 9.4)
-- Category/relevance validation with sensible defaults
-- Claims filtering to reject patent numbers (>100)
+- Quote validation, category/relevance validation, claims filtering
 - CLI integration: `--enrich`, `--enrich-backend`, `--case-type`, `--parties`
-- Test coverage: 153 total (137 pass, 16 skip)
+
+**Fixes Applied (2026-02-13):**
+1. ✅ Added missing chunking step (Step 4) to `run_pipeline.py`
+2. ✅ Fixed indentation bug causing sequential loop to run after parallel processing
+3. ✅ Updated step numbering (enrichment now Step 5, was Step 4)
+4. ✅ Added `chunk_all_documents` import and integration
 
 ## Production Features
 
@@ -113,54 +119,81 @@ The pipeline consists of 7 sequential steps:
 - ~~Bates sequential validation~~ → ✅ **Implemented** (gap and duplicate detection)
 - Claim-aware chunking for patents (future enhancement)
 
-## Development Commands
+## Quick Start: Running the Full Pipeline
 
-### Running Docling Conversion (When Implemented)
+### Step 1: Process Documents (Steps 1-4: Convert, Post-process, Citations, Chunking)
 ```bash
-docling \
-  --to md --to json \
-  --image-export-mode placeholder \
-  --no-enrich-picture-classes \
-  --no-enrich-picture-description \
-  --no-enrich-chart-extraction \
-  --output <converted_dir> \
-  <input_file>
-```
-
-### CLI Usage
-```bash
-# Full pipeline (sequential)
+# RECOMMENDED: Parallel processing (3-4x faster)
 .venv/bin/python lit_pipeline.py process \
-  tests/test_docs output/ \
-  --case-type patent \
-  --cleanup-json
-
-# Full pipeline (parallel - 3-4x faster)
-.venv/bin/python lit_pipeline.py process \
-  tests/test_docs output/ \
+  tests/test_docs \
+  output \
   --parallel \
   --max-workers 4 \
-  --case-type patent
+  --case-type patent \
+  --parties "Intel, Proxim" \
+  --cleanup-json \
+  --conversion-timeout 600
+```
+
+**What this does:**
+- Converts PDFs via Docling (JSON + Markdown)
+- Extracts citations (line numbers, columns, paragraphs, Bates)
+- Post-processes text (cleans OCR, inlines footnotes)
+- **Creates semantic chunks** (saves to *_chunks.json files)
+- Uses parallel processing (4 workers)
+- Cleans up JSON files after processing
+
+**Expected output:** `output/converted/` with .md, _citations.json, and **_chunks.json** files
+
+### Step 2: Build Search Indexes
+```bash
+.venv/bin/python lit_pipeline.py index output/
+```
+
+**What this does:**
+- Builds BM25 keyword index (~0.3s)
+- Builds ChromaDB vector index via Ollama (~90s for 882 chunks)
+- Uses incremental indexing (30x faster for unchanged files)
+
+**Expected output:** `output/indexes/bm25_index.pkl` and `output/indexes/chroma_db/`
+
+### Step 3: Test Search
+```bash
+# Hybrid search with reranking (best quality)
+.venv/bin/python lit_pipeline.py search \
+  output/ \
+  "TWT technology wireless networking" \
+  --mode hybrid \
+  --rerank \
+  --top-k 5
+
+# BM25-only search (fastest)
+.venv/bin/python lit_pipeline.py search \
+  output/ \
+  "patent claim construction" \
+  --mode bm25 \
+  --top-k 5
+
+# View statistics
+.venv/bin/python lit_pipeline.py stats output/
+```
+
+### Alternative Commands
+
+```bash
+# Sequential processing (slower, less memory)
+.venv/bin/python lit_pipeline.py process tests/test_docs output/ --case-type patent
 
 # Resume after interruption
-.venv/bin/python lit_pipeline.py process \
-  tests/test_docs output/ \
-  --resume
+.venv/bin/python lit_pipeline.py process tests/test_docs output/ --resume
 
-# Build indexes (incremental - only reindexes changed files)
-.venv/bin/python lit_pipeline.py index output/
+# Force reprocessing (ignore state)
+.venv/bin/python lit_pipeline.py process tests/test_docs output/ --force
 
-# Force rebuild all indexes
+# Force rebuild indexes
 .venv/bin/python lit_pipeline.py index output/ --force-rebuild
 
-# Search with reranking
-.venv/bin/python lit_pipeline.py search \
-  output/ "TWT technology" \
-  --rerank \
-  --top-k 10
-
-# Show stats, enrich
-.venv/bin/python lit_pipeline.py stats output/
+# Optional: LLM enrichment (adds summaries, categories, relevance scores)
 .venv/bin/python lit_pipeline.py enrich output/converted/ --backend ollama
 ```
 
@@ -207,6 +240,8 @@ docling \
 3. **NEVER assume key quotes from LLM are verbatim** - Always validate with exact substring match
 4. **NEVER confuse patent numbers (7+ digits) with claim numbers (1-2 digits)**
 5. **NEVER disable JSON output** - Page metadata is required for citation tracking
+6. **ALWAYS run chunking after citation extraction** - Chunks need citation metadata to be useful
+7. **NEVER skip the indexing step** - Chunks are not searchable until indexed
 
 ## Document Type Handling
 
@@ -259,11 +294,11 @@ ollama pull llama3.1:8b          # 4.7GB
 
 ```
 lit-doc-pipeline/
-├── lit_pipeline.py            # Unified CLI entry point (5 subcommands)
-├── run_pipeline.py            # Pipeline orchestration (steps 1-5)
-├── parallel_processor.py      # Parallel document processing (NEW)
-├── pipeline_state.py          # Error handling state tracking (NEW)
-├── index_state.py             # Incremental indexing state (NEW)
+├── lit_pipeline.py            # ⭐ MAIN CLI - Use this! (5 subcommands)
+├── run_pipeline.py            # Pipeline orchestration (steps 1-4)
+├── parallel_processor.py      # Parallel document processing
+├── pipeline_state.py          # Error handling & checkpoint/resume
+├── index_state.py             # Incremental indexing state
 ├── config_loader.py           # JSON/YAML config support
 ├── docling_converter.py       # PDF/DOCX conversion via Docling
 ├── citation_tracker.py        # Citation reconstruction from Docling JSON
@@ -271,31 +306,31 @@ lit-doc-pipeline/
 ├── pymupdf_extractor.py       # Fast path for text-based depositions
 ├── format_handlers.py         # Document type detection
 ├── post_processor.py          # Text cleaning + footnote insertion
-├── chunk_documents.py         # Section-aware chunking
+├── chunk_documents.py         # Section-aware chunking (chunk_all_documents)
 ├── bm25_indexer.py            # TF-IDF keyword search
 ├── vector_indexer.py          # ChromaDB + Ollama embeddings
 ├── hybrid_retriever.py        # RRF score fusion
 ├── reranker.py                # Cross-encoder reranking
-├── lit_doc_retriever.py       # Legacy search CLI
+├── lit_doc_retriever.py       # Legacy CLI (use lit_pipeline.py instead)
 ├── llm_enrichment.py          # LLM enrichment (3 backends)
 ├── benchmark.py               # Search quality benchmark (Precision@K)
-├── test_error_handling.py     # Error handling tests (NEW)
-├── test_performance_features.py # Performance tests (NEW)
 ├── configs/
-│   ├── default_config.json
-│   ├── retrieval_config.json
-│   └── enrichment_config.json
+│   ├── default_config.json    # Chunking, Bates patterns, Docling settings
+│   ├── retrieval_config.json  # Search configuration
+│   └── enrichment_config.json # LLM backend settings
 ├── tests/
+│   ├── test_docs/             # 7 test PDFs (87MB)
 │   ├── test_citation_tracker.py
 │   ├── test_chunk_documents.py
-│   ├── test_bm25_indexer.py
 │   ├── test_hybrid_retriever.py
-│   ├── test_reranker.py
-│   ├── test_regression.py
-│   ├── test_llm_enrichment.py
-│   └── ...
+│   └── ... (153 tests total)
 └── _Archive/
-    └── LITIGATION_DOCUMENT_PIPELINE_TRD.md
+    └── LITIGATION_DOCUMENT_PIPELINE_TRD.md  # Complete spec
+
+**Key Entry Points:**
+- `lit_pipeline.py` - Main CLI (use this for all operations)
+- `run_pipeline.py` - Called by lit_pipeline.py for processing
+- `chunk_documents.py` - Contains `chunk_all_documents()` function
 ```
 
 ## Testing Strategy

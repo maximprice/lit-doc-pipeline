@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a litigation document processing pipeline that converts legal documents (PDFs, DOCX) into structured, searchable formats optimized for LLM-assisted legal analysis. The system preserves precise citation information (page numbers, Bates stamps, line numbers, column numbers, paragraph numbers) required for legal work.
 
-**Current Status:** Phases 1-5 complete + Production hardening + Performance optimization. 153 tests (137 passing). Core pipeline functional with high-quality citation tracking (99.2% paragraph, 84.5% column detection), chunking, hybrid search, reranking, and optional LLM enrichment. Benchmark: 98% Precision@5. Performance: 3-4x faster with parallel processing, 30x faster with incremental indexing.
+**Current Status:** Phases 1-5 complete + Production hardening + Performance optimization + User experience. 153 tests (137 passing). Core pipeline functional with high-quality citation tracking (99.2% paragraph, 84.5% column detection), chunking, hybrid search, reranking, and optional LLM enrichment. Benchmark: 98% Precision@5. Performance: 3-4x faster with parallel processing, 30x faster with incremental indexing. Progress bars provide visual feedback during all long-running operations.
 
 ## Critical Requirements
 
@@ -99,6 +99,13 @@ The pipeline consists of 7 sequential steps:
 - ✅ Configurable timeouts (`--conversion-timeout`, default 300s)
 - ✅ Worker count control (`--parallel --max-workers N`)
 - ✅ SHA256-based change detection for incremental builds
+
+### ✅ User Experience (Complete)
+- ✅ Progress bars with tqdm (visual feedback for long operations)
+- ✅ Sequential processing: document count and ETA
+- ✅ Nested progress: file + chunk levels during enrichment
+- ✅ Parallel processing: real-time completion updates
+- ✅ Auto-disables in test environments (PYTEST_CURRENT_TEST detection)
 
 ### Quality Improvements
 - ~~Paragraph number extraction~~ → ✅ **99.2% coverage** (supports numbered format "N. ")
@@ -232,6 +239,7 @@ pymupdf>=1.24.0              # PDF extraction
 scikit-learn>=1.5.0          # BM25/TF-IDF
 chromadb>=0.4.0              # Vector store
 numpy>=2.0.0                 # Numerical ops
+tqdm>=4.67.0                 # Progress bars
 ```
 
 ### Optional Dependencies (Installed)

@@ -11,6 +11,7 @@ A Python-based system for converting legal documents (PDFs, DOCX, etc.) into str
 - **LLM Enrichment**: Optional summaries and categorization
 - **Robust Error Handling**: Checkpoint/resume, automatic retry limiting, graceful failure handling
 - **High Performance**: Parallel processing (3-4x faster) + incremental indexing (30x faster for unchanged files)
+- **Progress Bars**: Visual feedback with ETAs for all long-running operations (auto-disables in tests)
 
 ## Installation
 

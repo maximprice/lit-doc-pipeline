@@ -9,13 +9,24 @@ over processed litigation document chunks.
 import argparse
 import json
 import logging
+import os
 import sys
 import time
 from pathlib import Path
 from typing import Optional
 
+from tqdm import tqdm
+
 from citation_types import Chunk, DocumentType
 from index_state import IndexState
+
+
+def _should_disable_tqdm():
+    """Check if progress bars should be disabled."""
+    return (os.environ.get('TQDM_DISABLE', '0') == '1' or
+            os.environ.get('PYTEST_CURRENT_TEST') is not None or
+            os.environ.get('CI', '').lower() == 'true')
+
 
 # Delay imports to avoid chromadb import issues
 def _import_indexers():
@@ -82,7 +93,8 @@ def build_indexes(output_dir: str, config_path: Optional[str] = None, force: boo
         logger.error(f"No chunk files found in {converted_dir}")
         sys.exit(1)
 
-    for chunk_file in chunk_files:
+    disable_progress = _should_disable_tqdm()
+    for chunk_file in tqdm(chunk_files, desc="Loading chunks", unit="file", disable=disable_progress):
         try:
             with open(chunk_file, 'r') as f:
                 chunks_data = json.load(f)

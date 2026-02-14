@@ -21,9 +21,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
+from tqdm import tqdm
+
 from citation_types import Chunk, DocumentType
 
 logger = logging.getLogger(__name__)
+
+
+def _should_disable_tqdm():
+    """Check if progress bars should be disabled."""
+    return (os.environ.get('TQDM_DISABLE', '0') == '1' or
+            os.environ.get('PYTEST_CURRENT_TEST') is not None or
+            os.environ.get('CI', '').lower() == 'true')
+
 
 # Valid categories for chunk classification
 VALID_CATEGORIES = {
@@ -375,7 +385,11 @@ class LLMEnricher:
             logger.info("Backup created: %s", backup_path.name)
 
         # Process each chunk
-        for chunk_data in chunks_data:
+        disable_progress = _should_disable_tqdm()
+        pbar = tqdm(chunks_data, desc=f"  Chunks in {Path(path).name[:20]}",
+                    unit="chunk", disable=disable_progress, position=1, leave=False)
+
+        for chunk_data in pbar:
             chunk_id = chunk_data.get("chunk_id", "unknown")
 
             # Skip already-enriched unless force=True
@@ -427,6 +441,7 @@ class LLMEnricher:
             chunk_data["key_quotes"] = merged
 
             stats.enriched += 1
+            pbar.set_postfix_str(f"enriched={stats.enriched}, skipped={stats.skipped}")
 
             # Rate limiting
             if self.delay_between_calls > 0:
@@ -467,7 +482,11 @@ class LLMEnricher:
         aggregate = EnrichmentStats()
         start_time = time.time()
 
-        for chunk_file in chunk_files:
+        disable_progress = _should_disable_tqdm()
+        pbar = tqdm(chunk_files, desc="Enriching files", unit="file", disable=disable_progress)
+
+        for chunk_file in pbar:
+            pbar.set_postfix_str(f"{chunk_file.name[:25]}...")
             logger.info("Enriching: %s", chunk_file.name)
             stats = self.enrich_chunks_file(str(chunk_file), case_context, force=force)
             aggregate.total += stats.total

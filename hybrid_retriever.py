@@ -7,12 +7,23 @@ to combine results from BM25 and semantic search.
 
 import json
 import logging
+import os
 import pickle
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 from collections import defaultdict
 
+from tqdm import tqdm
+
 from citation_types import Chunk, SearchResult, DocumentType
+
+
+def _should_disable_tqdm():
+    """Check if progress bars should be disabled."""
+    return (os.environ.get('TQDM_DISABLE', '0') == '1' or
+            os.environ.get('PYTEST_CURRENT_TEST') is not None or
+            os.environ.get('CI', '').lower() == 'true')
+
 
 # Delay imports to avoid chromadb import issues at module load time
 def _import_indexers():
@@ -82,7 +93,8 @@ class HybridRetriever:
             return
 
         chunk_count = 0
-        for chunk_file in chunk_files:
+        disable_progress = _should_disable_tqdm()
+        for chunk_file in tqdm(chunk_files, desc="Loading chunks", unit="file", disable=disable_progress):
             try:
                 with open(chunk_file, 'r') as f:
                     chunks_data = json.load(f)

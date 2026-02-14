@@ -12,6 +12,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from tqdm import tqdm
+
 from citation_tracker import CitationTracker
 from citation_types import DocumentType
 from docling_converter import DoclingConverter
@@ -20,6 +22,13 @@ from post_processor import PostProcessor
 from pymupdf_extractor import is_text_based_pdf, extract_deposition
 
 logger = logging.getLogger(__name__)
+
+
+def _should_disable_tqdm():
+    """Check if progress bars should be disabled."""
+    return (os.environ.get('TQDM_DISABLE', '0') == '1' or
+            os.environ.get('PYTEST_CURRENT_TEST') is not None or
+            os.environ.get('CI', '').lower() == 'true')
 
 
 def process_single_document(
@@ -315,6 +324,10 @@ def process_documents_parallel(
             future_to_pdf[future] = (pdf_path, normalized)
 
         # Collect results as they complete
+        disable_progress = _should_disable_tqdm()
+        pbar = tqdm(total=len(future_to_pdf), desc="Processing (parallel)",
+                    unit="doc", disable=disable_progress)
+
         for future in as_completed(future_to_pdf):
             pdf_path, normalized = future_to_pdf[future]
 
@@ -330,13 +343,16 @@ def process_documents_parallel(
                     doc_state.mark_stage_complete("post_processing")
                     doc_state.mark_stage_complete("citation_tracking")
                     doc_state.mark_completed()
-                    logger.info("✓ Completed: %s", pdf_path.name)
+                    tqdm.write(f"✓ Completed: {pdf_path.name}")
+                    pbar.set_postfix_str(f"✓ {pdf_path.name[:30]}")
                 else:
                     doc_state.mark_failed(result.get("error", "Unknown error"))
-                    logger.error("✗ Failed: %s - %s", pdf_path.name, result.get("error"))
+                    tqdm.write(f"✗ Failed: {pdf_path.name} - {result.get('error')}")
+                    pbar.set_postfix_str(f"✗ {pdf_path.name[:30]}")
 
                 # Save state after each document
                 state.save()
+                pbar.update(1)
 
             except Exception as e:
                 error_msg = f"Worker error: {str(e)}"
@@ -352,6 +368,9 @@ def process_documents_parallel(
                     "status": "FAILED",
                     "error": error_msg,
                 })
+                pbar.update(1)
+
+        pbar.close()
 
     return results
 

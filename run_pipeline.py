@@ -12,10 +12,13 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import shutil
 import sys
 import traceback
 from pathlib import Path
+
+from tqdm import tqdm
 
 from citation_tracker import CitationTracker
 from citation_types import DocumentType
@@ -31,6 +34,13 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+
+def should_disable_tqdm():
+    """Check if progress bars should be disabled."""
+    return (os.environ.get('TQDM_DISABLE', '0') == '1' or
+            os.environ.get('PYTEST_CURRENT_TEST') is not None or
+            os.environ.get('CI', '').lower() == 'true')
 
 
 # Map known document stems to their types
@@ -154,8 +164,10 @@ def run_pipeline(
     else:
         # Sequential processing (original code)
         results = []
+        disable_progress = should_disable_tqdm()
+        pbar = tqdm(pdfs, desc="Processing documents", unit="doc", disable=disable_progress)
 
-    for pdf_path in pdfs:
+    for pdf_path in pbar:
         stem = pdf_path.stem
         normalized = normalize_stem(stem)
 
@@ -187,6 +199,7 @@ def run_pipeline(
 
         logger.info("=" * 60)
         logger.info("Processing: %s", pdf_path.name)
+        pbar.set_postfix_str(f"{pdf_path.name[:30]}...")
 
         try:
             # ── PyMuPDF fast path for text-based depositions ─────────────

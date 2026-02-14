@@ -51,6 +51,8 @@ The pipeline consists of 5 main steps:
 
 **Note:** Steps 1-4 run via `lit_pipeline.py process`, Step 5 via `lit_pipeline.py index`, Step 6 via `--enrich` flag or `lit_pipeline.py enrich`.
 
+**Additional commands:** `lit_pipeline.py classify` (standalone classification), `lit_pipeline.py remove` (surgical document removal from indexes).
+
 ## Implementation Status
 
 ### ✅ Phase 1-5: FULLY OPERATIONAL
@@ -83,6 +85,12 @@ The pipeline consists of 5 main steps:
 - Quote validation, category/relevance validation, claims filtering
 - CLI integration: `--enrich`, `--enrich-backend`, `--case-type`, `--parties`
 
+**Document Classification & Management**
+- `doc_classifier.py` - Generic PyMuPDF-based classifier with 5-signal system (filename, content, structural, font, learned profiles)
+- Interactive prompting by default for low-confidence classifications (shows first-page text + file path)
+- Self-learning via `ProfileStore` (persists to `~/.lit-pipeline/type_profiles.json`)
+- `lit_pipeline.py remove` - Surgical document removal from all indexes without full rebuild
+
 **Fixes Applied (2026-02-13):**
 1. ✅ Added missing chunking step (Step 4) to `run_pipeline.py`
 2. ✅ Fixed indentation bug causing sequential loop to run after parallel processing
@@ -92,7 +100,7 @@ The pipeline consists of 5 main steps:
 ## Production Features
 
 ### ✅ Production Readiness (Complete)
-- ✅ Unified CLI entry point (`lit_pipeline.py` with 5 subcommands)
+- ✅ Unified CLI entry point (`lit_pipeline.py` with 7 subcommands)
 - ✅ Config file support (`config_loader.py`, JSON/YAML)
 - ✅ Benchmark script (`benchmark.py`, 20 queries, Precision@5 + latency)
 - ✅ Error handling and recovery (`pipeline_state.py`, checkpoint/resume)
@@ -178,11 +186,33 @@ The pipeline consists of 5 main steps:
 .venv/bin/python lit_pipeline.py stats output/
 ```
 
+### Step 4: Remove a Document (Optional)
+
+To surgically remove a processed document from all output files and search indexes:
+
+```bash
+# Remove by document stem (normalized filename)
+.venv/bin/python lit_pipeline.py remove output/ "daniel_alexander_10_24_2025"
+
+# Also accepts original filenames (auto-normalized to stem)
+.venv/bin/python lit_pipeline.py remove output/ "Daniel Alexander - 10-24-2025"
+```
+
+**What this does:**
+- Deletes per-document files (.md, _citations.json, _chunks.json) from `output/converted/`
+- Removes matching entries from the BM25 index (filters sparse matrix rows)
+- Removes matching entries from the ChromaDB vector index (`collection.delete()`)
+- Cleans up pipeline state and index state JSON files
+- No full index rebuild required — changes are surgical
+
 ### Alternative Commands
 
 ```bash
 # Sequential processing (slower, less memory)
 .venv/bin/python lit_pipeline.py process tests/test_docs output/ --case-type patent
+
+# Non-interactive processing (skip prompts for low-confidence classifications)
+.venv/bin/python lit_pipeline.py process tests/test_docs output/ --non-interactive
 
 # Resume after interruption
 .venv/bin/python lit_pipeline.py process tests/test_docs output/ --resume
@@ -192,6 +222,11 @@ The pipeline consists of 5 main steps:
 
 # Force rebuild indexes
 .venv/bin/python lit_pipeline.py index output/ --force-rebuild
+
+# Classify documents without processing
+.venv/bin/python lit_pipeline.py classify tests/test_docs/
+.venv/bin/python lit_pipeline.py classify tests/test_docs/ --non-interactive
+.venv/bin/python lit_pipeline.py classify tests/test_docs/ --show-profiles
 
 # Optional: LLM enrichment (adds summaries, categories, relevance scores)
 .venv/bin/python lit_pipeline.py enrich output/converted/ --backend ollama
@@ -294,7 +329,7 @@ ollama pull llama3.1:8b          # 4.7GB
 
 ```
 lit-doc-pipeline/
-├── lit_pipeline.py            # ⭐ MAIN CLI - Use this! (5 subcommands)
+├── lit_pipeline.py            # ⭐ MAIN CLI - Use this! (7 subcommands)
 ├── run_pipeline.py            # Pipeline orchestration (steps 1-4)
 ├── parallel_processor.py      # Parallel document processing
 ├── pipeline_state.py          # Error handling & checkpoint/resume
@@ -304,6 +339,7 @@ lit-doc-pipeline/
 ├── citation_tracker.py        # Citation reconstruction from Docling JSON
 ├── citation_types.py          # Data structures (Chunk, SearchResult, etc.)
 ├── pymupdf_extractor.py       # Fast path for text-based depositions
+├── doc_classifier.py          # Generic document type classifier (self-learning)
 ├── format_handlers.py         # Document type detection
 ├── post_processor.py          # Text cleaning + footnote insertion
 ├── chunk_documents.py         # Section-aware chunking (chunk_all_documents)

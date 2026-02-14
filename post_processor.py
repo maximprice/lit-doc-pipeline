@@ -469,6 +469,9 @@ class PostProcessor:
         current_bates = None
         current_line_num = None
 
+        transcript_types = {DocumentType.DEPOSITION, DocumentType.HEARING_TRANSCRIPT}
+        patent_types = {DocumentType.PATENT}
+
         for idx, line in enumerate(lines):
             # Detect page markers
             page_match = re.search(r'(?:Page|p\.)\s+(\d+)', line, re.IGNORECASE)
@@ -488,7 +491,7 @@ class PostProcessor:
                     break
 
             # Detect deposition line numbers
-            if doc_type == DocumentType.DEPOSITION:
+            if doc_type in transcript_types:
                 line_match = re.match(r'^\s*(\d{1,2})\s+([QA])\s+(.*)$', line)
                 if line_match:
                     current_line_num = int(line_match.group(1))
@@ -511,7 +514,7 @@ class PostProcessor:
                     continue
 
             # Detect patent column markers
-            if doc_type == DocumentType.PATENT:
+            if doc_type in patent_types:
                 col_match = re.search(r'col(?:umn)?\.?\s*(\d+)', line, re.IGNORECASE)
                 if col_match:
                     column = int(col_match.group(1))

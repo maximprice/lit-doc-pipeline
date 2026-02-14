@@ -64,6 +64,16 @@ class DocumentChunker:
         self.max_tokens = max_tokens
         self.overlap_tokens = overlap_tokens
 
+    # Type sets for handler routing
+    TRANSCRIPT_TYPES = {DocumentType.DEPOSITION, DocumentType.HEARING_TRANSCRIPT}
+    PARAGRAPH_TYPES = {
+        DocumentType.EXPERT_REPORT, DocumentType.PLEADING,
+        DocumentType.DECLARATION, DocumentType.MOTION,
+        DocumentType.BRIEF, DocumentType.WITNESS_STATEMENT,
+        DocumentType.AGREEMENT,
+    }
+    PATENT_TYPES = {DocumentType.PATENT}
+
     def chunk_document(
         self,
         stem: str,
@@ -91,13 +101,13 @@ class DocumentChunker:
         sections = self._parse_markdown(md_content, doc_type)
         logger.info("Parsed %d sections from markdown", len(sections))
 
-        # Create chunks from sections
+        # Create chunks from sections - route by type sets
         chunks = []
-        if doc_type == DocumentType.DEPOSITION:
+        if doc_type in self.TRANSCRIPT_TYPES:
             chunks = self._chunk_deposition(sections, citations, stem, source_file)
-        elif doc_type in (DocumentType.EXPERT_REPORT, DocumentType.PLEADING):
+        elif doc_type in self.PARAGRAPH_TYPES:
             chunks = self._chunk_expert_report(sections, citations, stem, source_file)
-        elif doc_type == DocumentType.PATENT:
+        elif doc_type in self.PATENT_TYPES:
             chunks = self._chunk_patent(sections, citations, stem, source_file)
         else:
             chunks = self._chunk_generic(sections, citations, stem, source_file)
@@ -516,8 +526,14 @@ class DocumentChunker:
         # Extract document name from stem
         doc_name = stem.replace("_", " ").title()
 
-        if doc_type == DocumentType.DEPOSITION:
-            # Format: "Daniel Alexander Dep. 14:5-15:12"
+        # Citation format by type suffix
+        TYPE_SUFFIX = {
+            DocumentType.DEPOSITION: "Dep.",
+            DocumentType.HEARING_TRANSCRIPT: "Tr.",
+        }
+
+        if doc_type in self.TRANSCRIPT_TYPES:
+            suffix = TYPE_SUFFIX.get(doc_type, "Tr.")
             if metadata.line_ranges:
                 ranges = []
                 for pg in sorted(metadata.line_ranges.keys()):
@@ -526,11 +542,10 @@ class DocumentChunker:
                         ranges.append(f"{pg}:{start}")
                     else:
                         ranges.append(f"{pg}:{start}-{end}")
-                return f"{doc_name} Dep. {', '.join(ranges)}"
-            return f"{doc_name} Dep."
+                return f"{doc_name} {suffix} {', '.join(ranges)}"
+            return f"{doc_name} {suffix}"
 
-        elif doc_type in (DocumentType.EXPERT_REPORT, DocumentType.PLEADING):
-            # Format: "Cole Report ¶¶25-26"
+        elif doc_type in self.PARAGRAPH_TYPES:
             if metadata.paragraph_numbers:
                 paras = sorted(set(metadata.paragraph_numbers))
                 if len(paras) == 1:
@@ -539,8 +554,7 @@ class DocumentChunker:
                     return f"{doc_name} ¶¶{paras[0]}-{paras[-1]}"
             return f"{doc_name}"
 
-        elif doc_type == DocumentType.PATENT:
-            # Format: "'152 Patent, col. 3:45-55"
+        elif doc_type in self.PATENT_TYPES:
             if metadata.columns:
                 cols = sorted(set(metadata.columns))
                 return f"{doc_name}, col. {cols[0]}"
@@ -560,6 +574,7 @@ class DocumentChunker:
 def chunk_all_documents(
     converted_dir: str,
     target_tokens: int = DEFAULT_TARGET_TOKENS,
+    doc_type_map: Optional[Dict[str, DocumentType]] = None,
 ) -> Dict[str, List[Chunk]]:
     """
     Chunk all documents in a converted directory.
@@ -567,12 +582,15 @@ def chunk_all_documents(
     Args:
         converted_dir: Directory containing .md and _citations.json files
         target_tokens: Target chunk size in tokens
+        doc_type_map: Pre-computed mapping of stem -> DocumentType from classifier
 
     Returns:
         Dict mapping stem to list of chunks
     """
     converted_dir = Path(converted_dir)
     chunker = DocumentChunker(str(converted_dir), target_tokens=target_tokens)
+    if doc_type_map is None:
+        doc_type_map = {}
 
     results = {}
     for md_file in sorted(converted_dir.glob("*.md")):
@@ -584,16 +602,34 @@ def chunk_all_documents(
             logger.warning("No citations file for %s, skipping", stem)
             continue
 
-        # Detect doc type (could be enhanced)
-        doc_type = DocumentType.UNKNOWN
-        if "deposition" in stem or "alexander" in stem:
-            doc_type = DocumentType.DEPOSITION
-        elif "report" in stem or "cole" in stem:
-            doc_type = DocumentType.EXPERT_REPORT
-        elif "patent" in stem or "00006214" in stem:
-            doc_type = DocumentType.PATENT
+        # Look up doc type from classifier map, fall back to inferring from citations
+        doc_type = doc_type_map.get(stem, DocumentType.UNKNOWN)
+        if doc_type == DocumentType.UNKNOWN:
+            doc_type = _infer_type_from_citations(citations_file)
 
         chunks = chunker.chunk_document(stem, doc_type, md_file.name)
         results[stem] = chunks
 
     return results
+
+
+def _infer_type_from_citations(citations_path: Path) -> DocumentType:
+    """Infer document type from citation type fields in _citations.json."""
+    try:
+        with open(citations_path) as f:
+            citations = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return DocumentType.UNKNOWN
+
+    type_counts: Dict[str, int] = {}
+    for cit in citations.values():
+        t = cit.get("type", "unknown")
+        type_counts[t] = type_counts.get(t, 0) + 1
+
+    if "transcript_line" in type_counts:
+        return DocumentType.DEPOSITION
+    if "patent_column" in type_counts:
+        return DocumentType.PATENT
+    if "paragraph" in type_counts and type_counts["paragraph"] > 3:
+        return DocumentType.EXPERT_REPORT
+    return DocumentType.UNKNOWN

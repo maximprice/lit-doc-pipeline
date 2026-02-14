@@ -17,6 +17,18 @@ class DocumentType(Enum):
     PLEADING = "pleading"               # paragraph format (e.g., "Complaint ¶ 23")
     EXHIBIT = "exhibit"                 # page format (e.g., "Ex. 15, p. 3")
     UNKNOWN = "unknown"
+    # Extended types
+    HEARING_TRANSCRIPT = "hearing_transcript"       # page:line (reuses deposition handler)
+    DECLARATION = "declaration"                     # ¶ N (reuses expert_report handler)
+    MOTION = "motion"                               # ¶ N or p. N
+    BRIEF = "brief"                                 # ¶ N or p. N
+    PATENT_PROSECUTION = "patent_prosecution"       # p. N (generic handler)
+    AGREEMENT = "agreement"                         # § N.N, p. N
+    CORRESPONDENCE = "correspondence"               # p. N (generic handler)
+    TECHNICAL_STANDARD = "technical_standard"       # § N.N, p. N (generic handler)
+    SCHOLARLY = "scholarly"                          # p. N (generic handler)
+    SEC_FILING = "sec_filing"                       # p. N (generic handler)
+    WITNESS_STATEMENT = "witness_statement"          # ¶ N (reuses expert_report handler)
 
 
 @dataclass

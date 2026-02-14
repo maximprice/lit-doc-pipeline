@@ -16,10 +16,14 @@ from tqdm import tqdm
 
 from citation_tracker import CitationTracker
 from citation_types import DocumentType
+from doc_classifier import ClassificationResult
 from docling_converter import DoclingConverter
 from pipeline_state import PipelineState
 from post_processor import PostProcessor
 from pymupdf_extractor import is_text_based_pdf, extract_deposition
+
+# Type sets for handler routing
+TRANSCRIPT_TYPES = {DocumentType.DEPOSITION, DocumentType.HEARING_TRANSCRIPT}
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +39,8 @@ def process_single_document(
     pdf_path: Path,
     output_dir: Path,
     normalized: str,
-    known_doc_types: Dict[str, DocumentType],
+    doc_type: DocumentType,
+    is_text_based: bool,
     conversion_timeout: int,
     cleanup_json: bool,
     use_existing: Optional[Path] = None,
@@ -49,7 +54,8 @@ def process_single_document(
         pdf_path: Path to PDF file
         output_dir: Output directory
         normalized: Normalized document stem
-        known_doc_types: Mapping of document stems to types
+        doc_type: Pre-computed document type from classifier
+        is_text_based: Whether the document is text-based (from classifier)
         conversion_timeout: Timeout for conversion
         cleanup_json: Whether to cleanup JSON files
         use_existing: Path to existing converted files
@@ -64,8 +70,7 @@ def process_single_document(
         logger.info("Processing: %s (worker PID: %d)", pdf_path.name, os.getpid())
 
         # ── PyMuPDF fast path for text-based depositions ─────────────
-        known_type = known_doc_types.get(normalized)
-        if known_type == DocumentType.DEPOSITION and is_text_based_pdf(str(pdf_path)):
+        if doc_type in TRANSCRIPT_TYPES and is_text_based and is_text_based_pdf(str(pdf_path)):
             logger.info("[PyMuPDF] Text-based deposition detected")
             pymupdf_result = extract_deposition(str(pdf_path), str(converted_dir))
             logger.info("  Extracted %d lines, %d citations",
@@ -148,23 +153,6 @@ def process_single_document(
 
         # ── Step 2: Post-processing ──────────────────────────────────
         logger.info("[Step 2] Post-processing markdown...")
-
-        # Detect document type
-        has_lines = len(conversion_citations.get("line_markers", [])) > 0
-        has_columns = len(conversion_citations.get("column_markers", [])) > 0
-        has_paragraphs = len(conversion_citations.get("paragraph_markers", [])) > 0
-
-        if known_type:
-            doc_type = known_type
-        elif has_lines:
-            doc_type = DocumentType.DEPOSITION
-        elif has_columns:
-            doc_type = DocumentType.PATENT
-        elif has_paragraphs:
-            doc_type = DocumentType.EXPERT_REPORT
-        else:
-            doc_type = DocumentType.UNKNOWN
-
         logger.info("  Document type: %s", doc_type.value)
 
         processor = PostProcessor()
@@ -230,7 +218,7 @@ def process_documents_parallel(
     pdfs: List[Path],
     output_dir: Path,
     normalized_stems: Dict[str, str],
-    known_doc_types: Dict[str, DocumentType],
+    classifications: Dict[str, "ClassificationResult"],
     state: PipelineState,
     conversion_timeout: int = 300,
     cleanup_json: bool = True,
@@ -246,7 +234,7 @@ def process_documents_parallel(
         pdfs: List of PDF paths to process
         output_dir: Output directory
         normalized_stems: Mapping of original stems to normalized stems
-        known_doc_types: Mapping of normalized stems to document types
+        classifications: Pre-computed classifications from doc_classifier
         state: Pipeline state for tracking progress
         conversion_timeout: Timeout for conversion
         cleanup_json: Whether to cleanup JSON files
@@ -311,12 +299,17 @@ def process_documents_parallel(
             stem = pdf_path.stem
             normalized = normalized_stems.get(stem, stem.lower())
 
+            cr = classifications.get(normalized)
+            dt = cr.doc_type if cr else DocumentType.UNKNOWN
+            is_text = cr.is_text_based if cr else False
+
             future = executor.submit(
                 process_single_document,
                 pdf_path,
                 output_dir,
                 normalized,
-                known_doc_types,
+                dt,
+                is_text,
                 conversion_timeout,
                 cleanup_json,
                 use_existing,

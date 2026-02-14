@@ -116,11 +116,20 @@ class CitationTracker:
 
         self_ref_map = self._build_self_ref_map(texts)
 
-        if self.doc_type == DocumentType.DEPOSITION:
+        TRANSCRIPT_TYPES = {DocumentType.DEPOSITION, DocumentType.HEARING_TRANSCRIPT}
+        PARAGRAPH_TYPES = {
+            DocumentType.EXPERT_REPORT, DocumentType.PLEADING,
+            DocumentType.DECLARATION, DocumentType.MOTION,
+            DocumentType.BRIEF, DocumentType.WITNESS_STATEMENT,
+            DocumentType.AGREEMENT,
+        }
+        PATENT_TYPES = {DocumentType.PATENT}
+
+        if self.doc_type in TRANSCRIPT_TYPES:
             citations = self._handle_deposition(texts, self_ref_map, bates_by_page)
-        elif self.doc_type == DocumentType.PATENT:
+        elif self.doc_type in PATENT_TYPES:
             citations = self._handle_patent(texts, self_ref_map, bates_by_page, doc_data)
-        elif self.doc_type in (DocumentType.EXPERT_REPORT, DocumentType.PLEADING):
+        elif self.doc_type in PARAGRAPH_TYPES:
             citations = self._handle_expert_report(texts, self_ref_map, bates_by_page)
         else:
             citations = self._handle_generic(texts, self_ref_map, bates_by_page)

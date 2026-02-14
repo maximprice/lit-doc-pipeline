@@ -25,6 +25,7 @@ from tqdm import tqdm
 from citation_tracker import CitationTracker
 from citation_types import DocumentType
 from chunk_documents import chunk_all_documents
+from doc_classifier import classify_directory, ProfileStore, ClassificationResult
 from docling_converter import DoclingConverter
 from parallel_processor import process_documents_parallel, get_optimal_worker_count
 from pipeline_state import PipelineState
@@ -46,17 +47,6 @@ def should_disable_tqdm():
             os.environ.get('CI', '').lower() == 'true')
 
 
-# Map known document stems to their types
-KNOWN_DOC_TYPES = {
-    "daniel_alexander_10_24_2025": DocumentType.DEPOSITION,
-    "intel_prox_00006214": DocumentType.PATENT,
-    # IEEE standards — not traditional patent layout, use generic
-    "intel_prox_00001770": DocumentType.UNKNOWN,
-    "intel_prox_00002058": DocumentType.UNKNOWN,
-    "intel_prox_00002382": DocumentType.UNKNOWN,
-}
-
-
 def normalize_stem(name: str) -> str:
     """Normalize a filename stem to lowercase with underscores."""
     import re
@@ -65,24 +55,14 @@ def normalize_stem(name: str) -> str:
     return result.strip("_")
 
 
-def detect_doc_type(stem: str, conversion_citations: dict) -> DocumentType:
-    """Detect document type from known map or conversion citations."""
-    normalized = normalize_stem(stem)
-    if normalized in KNOWN_DOC_TYPES:
-        return KNOWN_DOC_TYPES[normalized]
-
-    # Fall back to heuristics from conversion
-    has_lines = len(conversion_citations.get("line_markers", [])) > 0
-    has_columns = len(conversion_citations.get("column_markers", [])) > 0
-    has_paragraphs = len(conversion_citations.get("paragraph_markers", [])) > 0
-
-    if has_lines:
-        return DocumentType.DEPOSITION
-    elif has_columns:
-        return DocumentType.PATENT
-    elif has_paragraphs:
-        return DocumentType.EXPERT_REPORT
-    return DocumentType.UNKNOWN
+# Type sets for handler routing
+TRANSCRIPT_TYPES = {DocumentType.DEPOSITION, DocumentType.HEARING_TRANSCRIPT}
+PARAGRAPH_TYPES = {
+    DocumentType.EXPERT_REPORT, DocumentType.PLEADING,
+    DocumentType.DECLARATION, DocumentType.MOTION,
+    DocumentType.BRIEF, DocumentType.WITNESS_STATEMENT,
+    DocumentType.AGREEMENT,
+}
 
 
 def run_pipeline(
@@ -100,6 +80,7 @@ def run_pipeline(
     conversion_timeout: int = 300,
     parallel: bool = False,
     max_workers: int = None,
+    interactive: bool = True,
 ):
     """Run steps 1-3 (+ optional enrichment) on all PDFs in input_dir.
 
@@ -129,12 +110,25 @@ def run_pipeline(
         logger.info("Resuming from previous run")
         logger.info(state.summary())
 
-    pdfs = sorted(input_dir.glob("*.pdf"))
+    pdfs = sorted(input_dir.rglob("*.pdf"))
     if not pdfs:
         logger.error("No PDF files found in %s", input_dir)
         sys.exit(1)
 
     logger.info("Found %d PDF files in %s", len(pdfs), input_dir)
+
+    # ── Pre-scan: Classify all documents ─────────────────────────────
+    logger.info("[Pre-scan] Classifying documents with PyMuPDF...")
+    profile_store = ProfileStore()
+    classifications = classify_directory(
+        str(input_dir),
+        interactive=interactive,
+        profile_store=profile_store,
+    )
+    # Build doc_type_map: normalized_stem -> DocumentType
+    doc_type_map = {stem: cr.doc_type for stem, cr in classifications.items()}
+    logger.info("Classifications: %s",
+                {s: dt.value for s, dt in doc_type_map.items()})
 
     # Check if parallel processing is requested
     if parallel:
@@ -151,7 +145,7 @@ def run_pipeline(
             pdfs=pdfs,
             output_dir=output_dir,
             normalized_stems=normalized_stems,
-            known_doc_types=KNOWN_DOC_TYPES,
+            classifications=classifications,
             state=state,
             conversion_timeout=conversion_timeout,
             cleanup_json=cleanup_json,
@@ -206,9 +200,11 @@ def run_pipeline(
 
             try:
                 # ── PyMuPDF fast path for text-based depositions ─────────────
-                known_type = KNOWN_DOC_TYPES.get(normalized)
-                if (known_type == DocumentType.DEPOSITION and
-                    is_text_based_pdf(str(pdf_path)) and
+                known_type = doc_type_map.get(normalized)
+                cr = classifications.get(normalized)
+                is_text = cr.is_text_based if cr else False
+                if (known_type in TRANSCRIPT_TYPES and
+                    is_text and is_text_based_pdf(str(pdf_path)) and
                     state.should_process_document(normalized, "conversion", force)):
 
                     logger.info("[PyMuPDF] Text-based deposition detected, using direct extraction")
@@ -375,7 +371,7 @@ def run_pipeline(
                 logger.info("[Step 2] Post-processing markdown...")
 
                 try:
-                    doc_type = detect_doc_type(normalized, conversion_citations)
+                    doc_type = doc_type_map.get(normalized, DocumentType.UNKNOWN)
                     logger.info("  Document type: %s", doc_type.value)
 
                     processor = PostProcessor()
@@ -402,7 +398,7 @@ def run_pipeline(
             else:
                 logger.info("[Step 2] Skipping post-processing (already complete)")
                 # Detect doc type even if skipping
-                doc_type = detect_doc_type(normalized, conversion_citations)
+                doc_type = doc_type_map.get(normalized, DocumentType.UNKNOWN)
 
             # ── Step 3: Citation tracking (bbox-based) ───────────────────
             if has_json and state.should_process_document(normalized, "citation_tracking", force):
@@ -484,7 +480,7 @@ def run_pipeline(
     logger.info("[Step 4] Chunking documents...")
 
     try:
-        all_chunks = chunk_all_documents(str(converted_dir))
+        all_chunks = chunk_all_documents(str(converted_dir), doc_type_map=doc_type_map)
 
         # Save chunks to individual files
         for stem, chunks in all_chunks.items():
@@ -616,6 +612,8 @@ Examples:
                         help="Enable parallel processing of documents")
     parser.add_argument("--max-workers", type=int, default=None,
                         help="Number of parallel workers (default: cpu_count - 1)")
+    parser.add_argument("--non-interactive", dest="interactive", action="store_false", default=True,
+                        help="Skip interactive prompts for low-confidence classifications")
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)
@@ -639,6 +637,7 @@ Examples:
         conversion_timeout=args.conversion_timeout,
         parallel=args.parallel,
         max_workers=args.max_workers,
+        interactive=args.interactive,
     )
 
 

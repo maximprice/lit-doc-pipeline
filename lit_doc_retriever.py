@@ -33,19 +33,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def build_indexes(output_dir: str, config_path: Optional[str] = None) -> None:
+def build_indexes(output_dir: str, config_path: Optional[str] = None, force: bool = False) -> None:
     """
     Build BM25 and vector indexes from chunk files.
 
     Args:
         output_dir: Directory containing chunk JSON files
         config_path: Path to retrieval config (optional)
+        force: Force rebuild even if chunks unchanged (default: False)
     """
     BM25Indexer, VectorIndexer, _ = _import_indexers()
 
     output_path = Path(output_dir)
     converted_dir = output_path / "converted"
     index_dir = output_path / "indexes"
+
+    # Initialize index state for incremental indexing
+    index_state = IndexState(index_dir)
 
     if not converted_dir.exists():
         logger.error(f"Chunks directory not found: {converted_dir}")
@@ -57,10 +61,22 @@ def build_indexes(output_dir: str, config_path: Optional[str] = None) -> None:
         with open(config_path, 'r') as f:
             config = json.load(f)
 
-    # Load chunks
-    logger.info("Loading chunks...")
+    # Prune deleted files from state
+    index_state.prune_missing_files(converted_dir)
+
+    # Determine which files need reindexing
+    # Note: get_documents_to_reindex() includes logging
+    files_to_reindex = index_state.get_documents_to_reindex(converted_dir, force=force)
+
+    # Early exit if nothing to do
+    if not files_to_reindex:
+        logger.info("Use --force-rebuild to force reindexing")
+        return
+
+    # Load ALL chunks (required because indexers don't support partial updates)
+    logger.info("Loading chunks from cache...")
     chunks = []
-    chunk_files = list(converted_dir.glob("*_chunks.json"))
+    chunk_files = sorted(converted_dir.glob("*_chunks.json"))
 
     if not chunk_files:
         logger.error(f"No chunk files found in {converted_dir}")

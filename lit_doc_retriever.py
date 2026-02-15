@@ -44,6 +44,59 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _char_pos_to_line_idx(text: str, char_pos: int) -> int:
+    """Convert a character position in text to a 0-based line index."""
+    return text[:char_pos].count("\n")
+
+
+def _find_query_page(query: str, chunk) -> tuple:
+    """
+    Find the page (and bates) where the query best matches in the chunk.
+
+    Returns:
+        (page, bates) or (None, None) if no page_map available.
+    """
+    page_map = chunk.citation.get("page_map")
+    if not page_map:
+        return None, None
+
+    bates_map = chunk.citation.get("bates_map")
+    core = chunk.core_text
+
+    # Try exact case-insensitive substring match
+    lower_core = core.lower()
+    lower_query = query.lower()
+    pos = lower_core.find(lower_query)
+    if pos >= 0:
+        line_idx = _char_pos_to_line_idx(core, pos)
+        line_idx = min(line_idx, len(page_map) - 1)
+        page = page_map[line_idx]
+        bates = bates_map[line_idx] if bates_map and line_idx < len(bates_map) else None
+        return page, bates
+
+    # Fallback: find line with most query term overlap
+    query_terms = set(lower_query.split())
+    if not query_terms:
+        return None, None
+
+    lines = core.split("\n")
+    best_idx = 0
+    best_overlap = 0
+    for i, line in enumerate(lines):
+        line_words = set(line.lower().split())
+        overlap = len(query_terms & line_words)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_idx = i
+
+    if best_overlap > 0 and best_idx < len(page_map):
+        page = page_map[best_idx]
+        bates = bates_map[best_idx] if bates_map and best_idx < len(bates_map) else None
+        return page, bates
+
+    return None, None
+
+
 def build_indexes(output_dir: str, config_path: Optional[str] = None, force: bool = False) -> None:
     """
     Build BM25 and vector indexes from chunk files.
@@ -332,6 +385,17 @@ def search_and_display(
         print(f"Type: {chunk.doc_type.value if hasattr(chunk.doc_type, 'value') else chunk.doc_type}")
         print(f"Citation: {chunk.citation_string}")
         print(f"Pages: {', '.join(map(str, chunk.pages))}")
+        bates = chunk.citation.get("bates_range", [])
+        if bates:
+            print(f"Bates: {', '.join(bates)}")
+
+        # Per-line match page attribution
+        if chunk.citation.get("page_map"):
+            match_page, match_bates = _find_query_page(query, chunk)
+            if match_page is not None:
+                print(f"Match Page: {match_page}")
+                if match_bates:
+                    print(f"Match Bates: {match_bates}")
 
         # Enrichment metadata
         if chunk.category or chunk.relevance_score or chunk.summary:

@@ -152,7 +152,10 @@ class DocumentChunker:
         Parse markdown into logical sections.
 
         Returns:
-            List of section dicts with 'lines', 'text_markers', 'type'
+            List of section dicts with 'lines', 'text_markers', 'type'.
+            Each entry in 'lines' is a tuple (line_text, text_id_or_None)
+            where text_id is the most recent [TEXT:N] marker that applies
+            to this line.
         """
         lines = content.split("\n")
         sections = []
@@ -161,6 +164,7 @@ class DocumentChunker:
             "text_markers": [],
             "type": "content"
         }
+        active_text_id = None  # Track the most recent [TEXT:N]
 
         for line in lines:
             # Detect section boundaries
@@ -169,7 +173,7 @@ class DocumentChunker:
                 if current_section["lines"]:
                     sections.append(current_section)
                 current_section = {
-                    "lines": [line],
+                    "lines": [(line, active_text_id)],
                     "text_markers": [],
                     "type": "header"
                 }
@@ -179,16 +183,17 @@ class DocumentChunker:
             if line.startswith("[TEXT:"):
                 match = re.match(r"\[TEXT:(\d+)\]", line)
                 if match:
-                    current_section["text_markers"].append(match.group(1))
+                    active_text_id = match.group(1)
+                    current_section["text_markers"].append(active_text_id)
                 # Don't add the marker line to content
                 continue
 
             # Skip other markers (will be parsed when needed)
             if line.startswith("[PAGE:") or line.startswith("[BATES:"):
-                current_section["lines"].append(line)
+                current_section["lines"].append((line, active_text_id))
                 continue
 
-            current_section["lines"].append(line)
+            current_section["lines"].append((line, active_text_id))
 
         # Add final section
         if current_section["lines"]:
@@ -212,10 +217,12 @@ class DocumentChunker:
         """
         chunks = []
         current_chunk_lines = []
+        # Per-line tracking: (page, bates) for each line in current_chunk_lines
+        current_line_attrs = []
         current_metadata = ChunkMetadata()
 
         for section in sections:
-            for line in section["lines"]:
+            for line, _text_id in section["lines"]:
                 # Track page markers
                 if line.startswith("[PAGE:"):
                     match = re.match(r"\[PAGE:(\d+)\]", line)
@@ -234,10 +241,13 @@ class DocumentChunker:
 
                     # Look up citation for this line
                     current_page = current_metadata.transcript_pages[-1] if current_metadata.transcript_pages else 1
+                    line_page = current_page
+                    line_bates = None
                     cite_key = f"line_P{current_page}_L{line_num}"
                     if cite_key in citations:
                         cit = citations[cite_key]
                         page = cit.get("page", current_page)
+                        line_page = page
                         if page not in current_metadata.pages:
                             current_metadata.pages.append(page)
 
@@ -249,10 +259,12 @@ class DocumentChunker:
                             current_metadata.line_ranges[current_page] = (min(start, line_num), max(end, line_num))
 
                         bates = cit.get("bates")
+                        line_bates = bates
                         if bates and bates not in current_metadata.bates_stamps:
                             current_metadata.bates_stamps.append(bates)
 
                     current_chunk_lines.append(line)
+                    current_line_attrs.append((line_page, line_bates))
 
                     # Check if we should start a new chunk
                     # Rule 1: If this is a Q, check if adding the expected A would exceed max_tokens
@@ -261,16 +273,23 @@ class DocumentChunker:
                     tokens = len(chunk_text) // CHARS_PER_TOKEN
 
                     if qa_marker == "A" and tokens >= self.target_tokens:
+                        # Build per-line maps from tracked attrs
+                        page_map = [a[0] for a in current_line_attrs]
+                        bates_map = [a[1] for a in current_line_attrs]
                         # Complete chunk after this A
                         chunk = self._create_chunk(
                             chunk_text, current_metadata, stem, source_file,
-                            len(chunks), DocumentType.DEPOSITION
+                            len(chunks), DocumentType.DEPOSITION,
+                            page_map=page_map, bates_map=bates_map,
                         )
                         chunks.append(chunk)
 
                         # Start new chunk with overlap (last few lines)
-                        overlap_lines = current_chunk_lines[-3:] if len(current_chunk_lines) > 3 else []
+                        overlap_count = min(3, len(current_chunk_lines))
+                        overlap_lines = current_chunk_lines[-overlap_count:] if overlap_count else []
+                        overlap_attrs = current_line_attrs[-overlap_count:] if overlap_count else []
                         current_chunk_lines = overlap_lines
+                        current_line_attrs = overlap_attrs
                         current_metadata = ChunkMetadata()
                         # Preserve page/Bates from overlap
                         if chunk.pages:
@@ -281,13 +300,20 @@ class DocumentChunker:
 
                 else:
                     current_chunk_lines.append(line)
+                    # Non-Q/A lines: inherit last known page/bates
+                    last_page = current_line_attrs[-1][0] if current_line_attrs else None
+                    last_bates = current_line_attrs[-1][1] if current_line_attrs else None
+                    current_line_attrs.append((last_page, last_bates))
 
         # Add final chunk
         if current_chunk_lines:
             chunk_text = "\n".join(current_chunk_lines)
+            page_map = [a[0] for a in current_line_attrs]
+            bates_map = [a[1] for a in current_line_attrs]
             chunk = self._create_chunk(
                 chunk_text, current_metadata, stem, source_file,
-                len(chunks), DocumentType.DEPOSITION
+                len(chunks), DocumentType.DEPOSITION,
+                page_map=page_map, bates_map=bates_map,
             )
             chunks.append(chunk)
 
@@ -308,52 +334,54 @@ class DocumentChunker:
         Strategy: Preserve paragraph boundaries, include footnotes with their paragraphs.
         """
         chunks = []
-        current_chunk_lines = []
+        current_chunk_entries = []  # (line_text, text_id) tuples
         current_metadata = ChunkMetadata()
 
         for section in sections:
-            for line in section["lines"]:
+            for line_text, text_id in section["lines"]:
                 # Skip empty lines
-                if not line.strip():
-                    current_chunk_lines.append(line)
+                if not line_text.strip():
+                    current_chunk_entries.append((line_text, text_id))
                     continue
 
                 # Detect paragraph start (numbered paragraphs)
-                para_match = re.match(r"^(\d+)\.\s+", line)
+                para_match = re.match(r"^(\d+)\.\s+", line_text)
 
                 # Check if we should start a new chunk
-                chunk_text = "\n".join(current_chunk_lines)
+                chunk_text = "\n".join(t for t, _ in current_chunk_entries)
                 tokens = len(chunk_text) // CHARS_PER_TOKEN
 
                 # Split at paragraph boundaries when target size reached
-                if para_match and tokens >= self.target_tokens and current_chunk_lines:
+                if para_match and tokens >= self.target_tokens and current_chunk_entries:
+                    page_map, bates_map = self._build_line_maps(current_chunk_entries, citations)
                     chunk = self._create_chunk(
                         chunk_text, current_metadata, stem, source_file,
-                        len(chunks), DocumentType.EXPERT_REPORT
+                        len(chunks), DocumentType.EXPERT_REPORT,
+                        page_map=page_map, bates_map=bates_map,
                     )
                     chunks.append(chunk)
 
                     # Start new chunk (no overlap for expert reports - paragraphs are self-contained)
-                    current_chunk_lines = []
+                    current_chunk_entries = []
                     current_metadata = ChunkMetadata()
 
-                current_chunk_lines.append(line)
+                current_chunk_entries.append((line_text, text_id))
 
-                # Extract text markers from section
-                for text_id in section.get("text_markers", []):
-                    if text_id not in current_metadata.text_ids:
-                        current_metadata.text_ids.append(text_id)
-                        # Look up citation
-                        cite_key = f"#/texts/{text_id}"
-                        if cite_key in citations:
-                            self._update_metadata(current_metadata, citations[cite_key])
+                # Apply citation metadata for this line's text_id
+                if text_id and text_id not in current_metadata.text_ids:
+                    current_metadata.text_ids.append(text_id)
+                    cite_key = f"#/texts/{text_id}"
+                    if cite_key in citations:
+                        self._update_metadata(current_metadata, citations[cite_key])
 
         # Add final chunk
-        if current_chunk_lines:
-            chunk_text = "\n".join(current_chunk_lines)
+        if current_chunk_entries:
+            chunk_text = "\n".join(t for t, _ in current_chunk_entries)
+            page_map, bates_map = self._build_line_maps(current_chunk_entries, citations)
             chunk = self._create_chunk(
                 chunk_text, current_metadata, stem, source_file,
-                len(chunks), DocumentType.EXPERT_REPORT
+                len(chunks), DocumentType.EXPERT_REPORT,
+                page_map=page_map, bates_map=bates_map,
             )
             chunks.append(chunk)
 
@@ -384,49 +412,104 @@ class DocumentChunker:
     ) -> List[Chunk]:
         """Generic chunking by token count."""
         chunks = []
-        current_chunk_lines = []
+        # Each entry is (line_text, text_id_or_None)
+        current_chunk_entries = []
         current_metadata = ChunkMetadata()
 
         for section in sections:
-            # Collect text markers from this section
-            for text_id in section.get("text_markers", []):
-                if text_id not in current_metadata.text_ids:
+            for line_text, text_id in section["lines"]:
+                # Apply citation metadata for this line's text_id
+                if text_id and text_id not in current_metadata.text_ids:
                     current_metadata.text_ids.append(text_id)
                     cite_key = f"#/texts/{text_id}"
                     if cite_key in citations:
                         self._update_metadata(current_metadata, citations[cite_key])
 
-            for line in section["lines"]:
-                current_chunk_lines.append(line)
+                current_chunk_entries.append((line_text, text_id))
 
                 # Check chunk size
-                chunk_text = "\n".join(current_chunk_lines)
+                chunk_text = "\n".join(t for t, _ in current_chunk_entries)
                 tokens = len(chunk_text) // CHARS_PER_TOKEN
 
                 if tokens >= self.target_tokens:
+                    page_map, bates_map = self._build_line_maps(current_chunk_entries, citations)
                     chunk = self._create_chunk(
                         chunk_text, current_metadata, stem, source_file,
-                        len(chunks), DocumentType.UNKNOWN
+                        len(chunks), DocumentType.UNKNOWN,
+                        page_map=page_map, bates_map=bates_map,
                     )
                     chunks.append(chunk)
 
                     # Start new chunk with overlap
-                    overlap_lines = current_chunk_lines[-5:] if len(current_chunk_lines) > 5 else []
-                    current_chunk_lines = overlap_lines
+                    overlap_entries = current_chunk_entries[-5:] if len(current_chunk_entries) > 5 else []
+                    current_chunk_entries = overlap_entries
                     current_metadata = ChunkMetadata()
+                    # Re-apply metadata for overlap lines
+                    for _, oid in overlap_entries:
+                        if oid and oid not in current_metadata.text_ids:
+                            current_metadata.text_ids.append(oid)
+                            cite_key = f"#/texts/{oid}"
+                            if cite_key in citations:
+                                self._update_metadata(current_metadata, citations[cite_key])
 
         # Add final chunk
-        if current_chunk_lines:
-            chunk_text = "\n".join(current_chunk_lines)
+        if current_chunk_entries:
+            chunk_text = "\n".join(t for t, _ in current_chunk_entries)
+            page_map, bates_map = self._build_line_maps(current_chunk_entries, citations)
             chunk = self._create_chunk(
                 chunk_text, current_metadata, stem, source_file,
-                len(chunks), DocumentType.UNKNOWN
+                len(chunks), DocumentType.UNKNOWN,
+                page_map=page_map, bates_map=bates_map,
             )
             chunks.append(chunk)
 
         return chunks
 
     # ── Metadata Helpers ─────────────────────────────────────────────
+
+    def _build_line_maps(
+        self,
+        entries: List[Tuple[str, Optional[str]]],
+        citations: dict,
+    ) -> Tuple[List[Optional[int]], List[Optional[str]]]:
+        """
+        Build per-line page_map and bates_map from chunk entries.
+
+        Each entry is (line_text, text_id). For each line in the joined
+        core_text, look up the page and bates from the citation keyed by
+        text_id. Forward-fill None gaps from the last known value.
+
+        Returns:
+            (page_map, bates_map) — parallel lists, one entry per line of core_text.
+        """
+        page_map: List[Optional[int]] = []
+        bates_map: List[Optional[str]] = []
+
+        for _line_text, text_id in entries:
+            page = None
+            bates = None
+            if text_id:
+                cite_key = f"#/texts/{text_id}"
+                cit = citations.get(cite_key, {})
+                page = cit.get("page")
+                bates = cit.get("bates")
+            page_map.append(page)
+            bates_map.append(bates)
+
+        # Forward-fill None gaps
+        last_page = None
+        last_bates = None
+        for i in range(len(page_map)):
+            if page_map[i] is not None:
+                last_page = page_map[i]
+            else:
+                page_map[i] = last_page
+            if bates_map[i] is not None:
+                last_bates = bates_map[i]
+            else:
+                bates_map[i] = last_bates
+
+        return page_map, bates_map
 
     def _update_metadata(self, metadata: ChunkMetadata, citation: dict):
         """Update chunk metadata from a citation dict."""
@@ -472,6 +555,8 @@ class DocumentChunker:
         source_file: str,
         chunk_idx: int,
         doc_type: DocumentType,
+        page_map: Optional[List[Optional[int]]] = None,
+        bates_map: Optional[List[Optional[str]]] = None,
     ) -> Chunk:
         """Create a Chunk object with complete citation metadata."""
         # Generate chunk ID
@@ -482,6 +567,12 @@ class DocumentChunker:
             "pdf_pages": sorted(set(metadata.pages)),
             "bates_range": metadata.bates_stamps,
         }
+
+        # Store per-line maps for precise search attribution
+        if page_map:
+            citation["page_map"] = page_map
+        if bates_map and any(b is not None for b in bates_map):
+            citation["bates_map"] = bates_map
 
         # Add type-specific fields
         if metadata.line_ranges:
@@ -561,13 +652,18 @@ class DocumentChunker:
             return f"{doc_name}"
 
         else:
-            # Generic: "Document Name, p. 14"
+            # Generic: "Document Name, p. 14 [BATES_001]"
+            bates_suffix = ""
+            if metadata.bates_stamps:
+                bates_suffix = f" [{metadata.bates_stamps[0]}]"
             if metadata.pages:
                 pages = sorted(set(metadata.pages))
                 if len(pages) == 1:
-                    return f"{doc_name}, p. {pages[0]}"
+                    return f"{doc_name}, p. {pages[0]}{bates_suffix}"
                 else:
-                    return f"{doc_name}, pp. {pages[0]}-{pages[-1]}"
+                    return f"{doc_name}, pp. {pages[0]}-{pages[-1]}{bates_suffix}"
+            if bates_suffix:
+                return f"{doc_name}{bates_suffix}"
             return f"{doc_name}"
 
 

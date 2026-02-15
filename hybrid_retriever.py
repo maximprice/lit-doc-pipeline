@@ -207,7 +207,7 @@ class HybridRetriever:
         # When reranking, fetch more candidates for the reranker to select from
         fetch_k = top_k
         if rerank:
-            fetch_k = top_k * 10
+            fetch_k = top_k * 3
 
         # Execute searches based on mode
         if mode == "bm25":

@@ -76,7 +76,7 @@ The pipeline consists of 5 main steps:
 - `lit_doc_retriever.py` - Legacy CLI (use `lit_pipeline.py` instead)
 
 **Phase 4: Cross-Encoder Reranker**
-- `reranker.py` - ms-marco-MiniLM-L-6-v2 with lazy loading
+- `reranker.py` - BAAI/bge-reranker-v2-m3 with lazy loading (8K token context)
 - Integrated into hybrid retriever with `--rerank` flag
 - Graceful degradation when sentence-transformers not installed
 
@@ -314,7 +314,7 @@ tqdm>=4.67.0                 # Progress bars
 
 ### Optional Dependencies (Installed)
 ```
-sentence-transformers>=3.0.0  # Cross-encoder reranking (installed: 5.2.2)
+sentence-transformers>=3.0.0  # Cross-encoder reranking (installed: 5.2.2, model: bge-reranker-v2-m3)
 anthropic>=0.40.0             # Claude API for enrichment (installed: 0.46.0)
 ```
 
@@ -346,7 +346,7 @@ lit-doc-pipeline/
 ├── bm25_indexer.py            # TF-IDF keyword search
 ├── vector_indexer.py          # ChromaDB + Ollama embeddings
 ├── hybrid_retriever.py        # RRF score fusion
-├── reranker.py                # Cross-encoder reranking
+├── reranker.py                # Cross-encoder reranking (bge-reranker-v2-m3, 8K context)
 ├── lit_doc_retriever.py       # Legacy CLI (use lit_pipeline.py instead)
 ├── llm_enrichment.py          # LLM enrichment (3 backends)
 ├── benchmark.py               # Search quality benchmark (Precision@K)
@@ -400,10 +400,10 @@ lit-doc-pipeline/
 
 ### Benchmark Results (as of 2026-02-11)
 - **BM25 Precision@5:** 98.0% (20 queries, 56-chunk corpus)
-- **BM25+Rerank Precision@5:** 98.0% (cross-encoder ms-marco-MiniLM-L-6-v2)
+- **BM25+Rerank Precision@5:** 98.0% (cross-encoder BAAI/bge-reranker-v2-m3)
 - **Hit Rate:** 100% (both modes)
 - **BM25 Latency:** <1ms per query
-- **Rerank Latency:** ~443ms mean, 601ms P95
+- **Rerank Latency:** ~19s per query (bge-reranker-v2-m3 with 30 candidates on MPS)
 - Run `benchmark.py` to reproduce
 
 ## Reference Documents

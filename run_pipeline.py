@@ -17,6 +17,7 @@ import logging
 import os
 import shutil
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -25,7 +26,7 @@ from tqdm import tqdm
 from citation_tracker import CitationTracker
 from citation_types import DocumentType
 from chunk_documents import chunk_all_documents
-from doc_classifier import classify_directory, ProfileStore, ClassificationResult
+from doc_classifier import classify_directory, ProfileStore, ClassificationResult, is_condensed_transcript
 from docling_converter import DoclingConverter
 from parallel_processor import process_documents_parallel, get_optimal_worker_count
 from pipeline_state import PipelineState
@@ -65,6 +66,250 @@ PARAGRAPH_TYPES = {
 }
 
 
+def _format_duration(seconds: float) -> str:
+    """Format a duration in seconds to a human-readable string."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    elif seconds < 3600:
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{minutes}m {secs:02d}s"
+    else:
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        return f"{hours}h {minutes:02d}m"
+
+
+def generate_pipeline_report(
+    results: list,
+    skipped_condensed: list,
+    converted_dir: Path,
+    pipeline_elapsed: float,
+    cleanup_json: bool = True,
+    parallel: bool = False,
+    max_workers: int = None,
+):
+    """Print a concise dashboard-style pipeline report.
+
+    Replaces the old verbose per-document listing with aggregated statistics
+    and sections that highlight problems (errors, warnings) while keeping
+    successful runs compact.
+    """
+    lines = []
+
+    def out(text=""):
+        lines.append(text)
+
+    # Partition results
+    ok_results = [r for r in results if r["status"] == "OK"]
+    failed_results = [r for r in results if r["status"] == "FAILED"]
+    skipped_results = [r for r in results if r["status"] == "SKIPPED"]
+
+    total = len(ok_results) + len(failed_results) + len(skipped_results)
+
+    # ── Header ────────────────────────────────────────────────────────
+    out("=" * 80)
+    out(" PIPELINE REPORT")
+    out("=" * 80)
+
+    # ── Summary ───────────────────────────────────────────────────────
+    out()
+    out(" SUMMARY")
+    out(" -------")
+
+    condensed_count = len(skipped_condensed)
+    out(f" Documents:  {total} total | {len(ok_results)} OK | "
+        f"{len(failed_results)} failed | {len(skipped_results)} skipped | "
+        f"{condensed_count} condensed")
+
+    # Chunk and citation totals (from OK results only)
+    total_chunks = sum(r.get("chunks_count", 0) for r in ok_results)
+    total_citations = sum(r.get("citations_count", 0) for r in ok_results)
+    if ok_results:
+        avg_chunks = total_chunks / len(ok_results)
+        avg_citations = total_citations / len(ok_results)
+        out(f" Chunks:     {total_chunks:,} across {len(ok_results)} documents "
+            f"(avg {avg_chunks:.1f}/doc)")
+        out(f" Citations:  {total_citations:,} total (avg {avg_citations:.1f}/doc)")
+
+        coverages = [r.get("coverage_pct", 0.0) for r in ok_results]
+        avg_coverage = sum(coverages) / len(coverages)
+        out(f" Coverage:   {avg_coverage:.1f}% avg")
+
+    # Timing
+    mode_str = "parallel" if parallel else "sequential"
+    if parallel and max_workers:
+        mode_str += f", {max_workers} workers"
+    if ok_results:
+        elapsed_vals = [r.get("elapsed_seconds", 0) for r in ok_results if r.get("elapsed_seconds")]
+        avg_time = sum(elapsed_vals) / len(elapsed_vals) if elapsed_vals else 0
+        out(f" Time:       {_format_duration(pipeline_elapsed)} "
+            f"({_format_duration(avg_time)} avg/doc) | {mode_str}")
+    else:
+        out(f" Time:       {_format_duration(pipeline_elapsed)} | {mode_str}")
+
+    # ── Classification Distribution ───────────────────────────────────
+    if ok_results:
+        out()
+        out(" CLASSIFICATION DISTRIBUTION")
+        out(" ---------------------------")
+
+        type_counts: dict[str, int] = {}
+        for r in ok_results:
+            dt = r.get("doc_type", "unknown")
+            type_counts[dt] = type_counts.get(dt, 0) + 1
+
+        for dt, count in sorted(type_counts.items(), key=lambda x: -x[1]):
+            pct = 100.0 * count / len(ok_results)
+            out(f" {dt:<24s} {count:>4}  ({pct:.1f}%)")
+
+    # ── Extraction Methods ────────────────────────────────────────────
+    if ok_results:
+        out()
+        out(" EXTRACTION METHODS")
+        out(" ------------------")
+
+        method_counts: dict[str, int] = {}
+        for r in ok_results:
+            method = r.get("extraction_method", "docling")
+            method_counts[method] = method_counts.get(method, 0) + 1
+
+        method_labels = {"docling": "docling", "pymupdf": "pymupdf (fast path)"}
+        for method, count in sorted(method_counts.items(), key=lambda x: -x[1]):
+            pct = 100.0 * count / len(ok_results)
+            label = method_labels.get(method, method)
+            out(f" {label:<24s} {count:>4}  ({pct:.1f}%)")
+
+    # ── Errors ────────────────────────────────────────────────────────
+    if failed_results:
+        out()
+        out(f" ERRORS ({len(failed_results)} document{'s' if len(failed_results) != 1 else ''})")
+        out(" " + "-" * len(f"ERRORS ({len(failed_results)} document{'s' if len(failed_results) != 1 else ''})"))
+        for r in failed_results:
+            out(f" FAIL  {r['file']}")
+            out(f"       {r.get('error', 'Unknown error')}")
+
+    # ── Warnings ──────────────────────────────────────────────────────
+    warnings_sections = []
+
+    # Zero citations
+    zero_cite = [r for r in ok_results if r.get("citations_count", 0) == 0]
+    if zero_cite:
+        section_lines = [f" Zero citations ({len(zero_cite)}):"]
+        for r in zero_cite:
+            section_lines.append(f"   - {r['file']} (type: {r.get('doc_type', 'unknown')})")
+        warnings_sections.append(section_lines)
+
+    # Low coverage < 50%
+    low_cov = [r for r in ok_results
+               if r.get("citations_count", 0) > 0 and r.get("coverage_pct", 0) < 50]
+    if low_cov:
+        section_lines = [f" Low coverage < 50% ({len(low_cov)}):"]
+        for r in low_cov:
+            section_lines.append(
+                f"   - {r['file']} (type: {r.get('doc_type', 'unknown')}, "
+                f"{r['citations_count']} citations, {r['coverage_pct']:.1f}% coverage)")
+        warnings_sections.append(section_lines)
+
+    # Zero chunks
+    zero_chunks = [r for r in ok_results if r.get("chunks_count", 0) == 0]
+    if zero_chunks:
+        section_lines = [f" Zero chunks produced ({len(zero_chunks)}):"]
+        for r in zero_chunks:
+            section_lines.append(
+                f"   - {r['file']} (type: {r.get('doc_type', 'unknown')}, "
+                f"{r.get('citations_count', 0)} citations)")
+        warnings_sections.append(section_lines)
+
+    # Citation degraded (had JSON but citation tracking failed)
+    degraded = [r for r in ok_results if r.get("citation_degraded")]
+    if degraded:
+        section_lines = [f" Citation tracking degraded ({len(degraded)}):"]
+        for r in degraded:
+            section_lines.append(f"   - {r['file']} (type: {r.get('doc_type', 'unknown')})")
+        warnings_sections.append(section_lines)
+
+    # No JSON available
+    no_json = [r for r in ok_results if not r.get("had_json", True)]
+    if no_json:
+        section_lines = [f" No JSON for citation tracking ({len(no_json)}):"]
+        for r in no_json:
+            section_lines.append(f"   - {r['file']} (type: {r.get('doc_type', 'unknown')})")
+        warnings_sections.append(section_lines)
+
+    # Low-confidence classification
+    low_conf = [r for r in ok_results
+                if r.get("classification_confidence") is not None
+                and r["classification_confidence"] < 0.15]
+    if low_conf:
+        section_lines = [f" Low-confidence classification ({len(low_conf)}):"]
+        for r in low_conf:
+            section_lines.append(
+                f"   - {r['file']} (classified as: {r.get('doc_type', 'unknown')}, "
+                f"confidence: {r['classification_confidence']:.2f})")
+        warnings_sections.append(section_lines)
+
+    if warnings_sections:
+        total_warn = sum(
+            len([l for l in s if l.startswith("   - ")]) for s in warnings_sections
+        )
+        out()
+        out(f" WARNINGS ({total_warn} document{'s' if total_warn != 1 else ''})")
+        out(" " + "-" * len(f"WARNINGS ({total_warn} document{'s' if total_warn != 1 else ''})"))
+        for section_lines in warnings_sections:
+            for line in section_lines:
+                out(line)
+            out()
+
+    # ── Info ──────────────────────────────────────────────────────────
+    if skipped_results or skipped_condensed:
+        out()
+        out(" INFO")
+        out(" ----")
+        if skipped_results:
+            out(f" Skipped: {len(skipped_results)} (already completed from previous run)")
+        if skipped_condensed:
+            out(f" Condensed transcripts: {len(skipped_condensed)} "
+                "(unsupported multi-page layout)")
+            for name in skipped_condensed:
+                out(f"   - {name}")
+
+    # ── Output ────────────────────────────────────────────────────────
+    out()
+    out(" OUTPUT")
+    out(" ------")
+    out(f" Directory: {converted_dir}/")
+    try:
+        output_files = list(converted_dir.iterdir())
+        total_size = sum(f.stat().st_size for f in output_files)
+
+        # Count by extension
+        ext_counts: dict[str, int] = {}
+        for f in output_files:
+            ext = f.suffix
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+
+        ext_summary = " + ".join(
+            f"{count} {ext}" for ext, count in sorted(ext_counts.items())
+        )
+        out(f" Files:     {len(output_files)} ({ext_summary})")
+
+        if total_size >= 1024 * 1024:
+            out(f" Size:      {total_size / 1024 / 1024:.1f} MB")
+        else:
+            out(f" Size:      {total_size / 1024:.1f} KB")
+    except FileNotFoundError:
+        out(" Files:     (directory not found)")
+
+    if cleanup_json:
+        out(" (Docling JSON files cleaned up to save disk space)")
+
+    out("=" * 80)
+
+    # Print the report
+    print("\n" + "\n".join(lines))
+
+
 def run_pipeline(
     input_dir: Path,
     output_dir: Path,
@@ -100,6 +345,7 @@ def run_pipeline(
         parallel: Enable parallel processing of documents
         max_workers: Number of parallel workers (default: cpu_count - 1)
     """
+    pipeline_start = time.monotonic()
     converted_dir = output_dir / "converted"
     converted_dir.mkdir(parents=True, exist_ok=True)
 
@@ -129,6 +375,21 @@ def run_pipeline(
     doc_type_map = {stem: cr.doc_type for stem, cr in classifications.items()}
     logger.info("Classifications: %s",
                 {s: dt.value for s, dt in doc_type_map.items()})
+
+    # ── Filter out condensed transcripts ─────────────────────────────
+    skipped_condensed = []
+    filtered_pdfs = []
+    for pdf_path in pdfs:
+        if is_condensed_transcript(str(pdf_path)):
+            logger.info("Skipping condensed transcript: %s", pdf_path.name)
+            skipped_condensed.append(pdf_path.name)
+        else:
+            filtered_pdfs.append(pdf_path)
+
+    if skipped_condensed:
+        logger.info("Skipped %d condensed transcript(s): %s",
+                    len(skipped_condensed), ", ".join(skipped_condensed))
+    pdfs = filtered_pdfs
 
     # Check if parallel processing is requested
     if parallel:
@@ -194,6 +455,7 @@ def run_pipeline(
                 })
                 continue
 
+            doc_start = time.monotonic()
             logger.info("=" * 60)
             logger.info("Processing: %s", pdf_path.name)
             pbar.set_postfix_str(f"{pdf_path.name[:30]}...")
@@ -234,6 +496,15 @@ def run_pipeline(
                             "coverage_pct": 100.0,
                             "type_distribution": {"transcript_line": pymupdf_result["citation_count"]},
                             "extraction_method": "pymupdf",
+                            "elapsed_seconds": round(time.monotonic() - doc_start, 1),
+                            "classification_confidence": cr.confidence if cr else None,
+                            "classification_needs_input": cr.needs_user_input if cr else False,
+                            "had_json": False,
+                            "citation_degraded": False,
+                            "chunks_count": 0,
+                            "bates_gaps": [],
+                            "bates_duplicates": [],
+                            "line_gaps": [],
                         })
                         continue
 
@@ -252,6 +523,7 @@ def run_pipeline(
                     "stem": normalized,
                     "status": "FAILED",
                     "error": error_msg,
+                    "elapsed_seconds": round(time.monotonic() - doc_start, 1),
                 })
                 continue
 
@@ -305,6 +577,7 @@ def run_pipeline(
                                     "stem": normalized,
                                     "status": "FAILED",
                                     "error": error_msg,
+                                    "elapsed_seconds": round(time.monotonic() - doc_start, 1),
                                 })
                                 continue
 
@@ -334,6 +607,7 @@ def run_pipeline(
                             "stem": normalized,
                             "status": "FAILED",
                             "error": error_msg,
+                            "elapsed_seconds": round(time.monotonic() - doc_start, 1),
                         })
                         continue
 
@@ -357,6 +631,7 @@ def run_pipeline(
                         "stem": normalized,
                         "status": "FAILED",
                         "error": error_msg,
+                        "elapsed_seconds": round(time.monotonic() - doc_start, 1),
                     })
                     continue
             else:
@@ -393,6 +668,7 @@ def run_pipeline(
                         "stem": normalized,
                         "status": "FAILED",
                         "error": error_msg,
+                        "elapsed_seconds": round(time.monotonic() - doc_start, 1),
                     })
                     continue
             else:
@@ -401,6 +677,7 @@ def run_pipeline(
                 doc_type = doc_type_map.get(normalized, DocumentType.UNKNOWN)
 
             # ── Step 3: Citation tracking (bbox-based) ───────────────────
+            citation_degraded = False
             if has_json and state.should_process_document(normalized, "citation_tracking", force):
                 logger.info("[Step 3] Reconstructing citations from JSON bbox data...")
 
@@ -436,6 +713,7 @@ def run_pipeline(
                     logger.warning("  Continuing without bbox-based citations")
                     citations = {}
                     metrics = None
+                    citation_degraded = True
                     # Still mark stage complete (partial success)
                     doc_state.mark_stage_complete("citation_tracking")
                     state.save()
@@ -473,6 +751,16 @@ def run_pipeline(
                 "citations_count": len(citations),
                 "coverage_pct": metrics.coverage_pct if metrics else 0.0,
                 "type_distribution": metrics.type_distribution if metrics else {},
+                "extraction_method": "docling",
+                "elapsed_seconds": round(time.monotonic() - doc_start, 1),
+                "classification_confidence": cr.confidence if cr else None,
+                "classification_needs_input": cr.needs_user_input if cr else False,
+                "had_json": has_json,
+                "citation_degraded": citation_degraded,
+                "chunks_count": 0,
+                "bates_gaps": metrics.bates_gaps if metrics else [],
+                "bates_duplicates": metrics.bates_duplicates if metrics else [],
+                "line_gaps": metrics.line_gaps if metrics else [],
             })
 
     # ── Step 4: Chunking ─────────────────────────────────────────────
@@ -494,6 +782,13 @@ def run_pipeline(
 
         logger.info("  Total: %d documents, %d chunks",
                    len(all_chunks), sum(len(chunks) for chunks in all_chunks.values()))
+
+        # Back-fill chunk counts into results
+        chunk_counts = {stem: len(chunks) for stem, chunks in all_chunks.items()}
+        for r in results:
+            if r["status"] == "OK":
+                r["chunks_count"] = chunk_counts.get(r["stem"], 0)
+
     except Exception as e:
         logger.error("Chunking failed: %s", str(e))
         logger.debug(traceback.format_exc())
@@ -534,33 +829,17 @@ def run_pipeline(
     state.save()
     logger.info("\n" + state.summary())
 
-    # ── Summary ──────────────────────────────────────────────────────
-    print("\n" + "=" * 60)
-    print("PIPELINE SUMMARY")
-    print("=" * 60)
-    for r in results:
-        status = r["status"]
-        if status == "FAILED":
-            print(f"  FAIL  {r['file']}: {r.get('error', 'Unknown error')}")
-        else:
-            print(f"  OK    {r['file']}")
-            print(f"        Type: {r['doc_type']}, Citations: {r['citations_count']}, "
-                  f"Coverage: {r['coverage_pct']:.1f}%")
-            if r.get("type_distribution"):
-                print(f"        Types: {r['type_distribution']}")
-    print("=" * 60)
-
-    # Verify output files
-    print("\nOutput files:")
-    total_size = 0
-    for f in sorted(converted_dir.iterdir()):
-        size = f.stat().st_size
-        total_size += size
-        print(f"  {f.name:50s} {size:>10,} bytes")
-
-    print(f"\nTotal output size: {total_size:,} bytes ({total_size / 1024 / 1024:.1f} MB)")
-    if cleanup_json:
-        print("(Docling JSON files cleaned up to save disk space)")
+    # ── Pipeline Report ──────────────────────────────────────────────
+    pipeline_elapsed = time.monotonic() - pipeline_start
+    generate_pipeline_report(
+        results=results,
+        skipped_condensed=skipped_condensed,
+        converted_dir=converted_dir,
+        pipeline_elapsed=pipeline_elapsed,
+        cleanup_json=cleanup_json,
+        parallel=parallel,
+        max_workers=max_workers,
+    )
 
     return results
 

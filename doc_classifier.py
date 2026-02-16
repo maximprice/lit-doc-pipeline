@@ -746,3 +746,43 @@ def classify_directory(
                     logger.warning("Could not learn from %s: %s", pdf_path, e)
 
     return classifications
+
+
+# ── Condensed transcript detection ───────────────────────────────────
+
+_CONDENSED_FILENAME_RE = re.compile(r"condensed", re.IGNORECASE)
+_CONDENSED_HEADER_RE = re.compile(
+    r"\d+\s*\(\s*\d+\s+to\s+\d+\s*\)",  # e.g. "1 (1 to 4)"
+)
+
+
+def is_condensed_transcript(pdf_path: str) -> bool:
+    """Detect condensed transcripts (multiple transcript pages per physical page).
+
+    Checks filename for "condensed" and/or first-page content for the
+    characteristic "N (N to N)" header pattern.  These documents produce
+    garbage when extracted because columns from different pages get merged.
+
+    Returns:
+        True if the PDF appears to be a condensed transcript.
+    """
+    path = Path(pdf_path)
+
+    # Fast check: filename
+    if _CONDENSED_FILENAME_RE.search(path.stem):
+        return True
+
+    # Content check: look for "N (N to N)" pattern in first 3 pages
+    try:
+        doc = fitz.open(pdf_path)
+        pages_to_check = min(3, len(doc))
+        for i in range(pages_to_check):
+            text = doc[i].get_text("text")
+            if _CONDENSED_HEADER_RE.search(text):
+                doc.close()
+                return True
+        doc.close()
+    except Exception:
+        pass
+
+    return False

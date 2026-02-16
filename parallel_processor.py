@@ -8,6 +8,7 @@ thread-safe state tracking and error handling.
 import logging
 import multiprocessing as mp
 import os
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -44,6 +45,8 @@ def process_single_document(
     conversion_timeout: int,
     cleanup_json: bool,
     use_existing: Optional[Path] = None,
+    classification_confidence: float = None,
+    classification_needs_input: bool = False,
 ) -> Dict:
     """
     Process a single document through the pipeline.
@@ -59,10 +62,13 @@ def process_single_document(
         conversion_timeout: Timeout for conversion
         cleanup_json: Whether to cleanup JSON files
         use_existing: Path to existing converted files
+        classification_confidence: Confidence score from classifier (0.0-1.0)
+        classification_needs_input: Whether classification needed user input
 
     Returns:
         Result dictionary with processing status
     """
+    doc_start = time.monotonic()
     converted_dir = output_dir / "converted"
     stem = pdf_path.stem
 
@@ -88,6 +94,15 @@ def process_single_document(
                 "coverage_pct": 100.0,
                 "type_distribution": {"transcript_line": pymupdf_result["citation_count"]},
                 "extraction_method": "pymupdf",
+                "elapsed_seconds": round(time.monotonic() - doc_start, 1),
+                "classification_confidence": classification_confidence,
+                "classification_needs_input": classification_needs_input,
+                "had_json": False,
+                "citation_degraded": False,
+                "chunks_count": 0,
+                "bates_gaps": [],
+                "bates_duplicates": [],
+                "line_gaps": [],
             }
 
         # ── Step 1: Conversion ───────────────────────────────────────
@@ -118,6 +133,7 @@ def process_single_document(
                     "stem": normalized,
                     "status": "FAILED",
                     "error": error_msg,
+                    "elapsed_seconds": round(time.monotonic() - doc_start, 1),
                 }
 
             conversion_citations = result.citations_found
@@ -145,6 +161,7 @@ def process_single_document(
                 "stem": normalized,
                 "status": "FAILED",
                 "error": error_msg,
+                "elapsed_seconds": round(time.monotonic() - doc_start, 1),
             }
 
         has_json = final_json.exists()
@@ -191,6 +208,7 @@ def process_single_document(
             logger.warning("[Step 3] Skipped — no JSON file")
 
         # Return result
+        citation_degraded = (has_json and metrics is None)
         return {
             "file": pdf_path.name,
             "stem": normalized,
@@ -201,6 +219,16 @@ def process_single_document(
             "citations_count": len(citations),
             "coverage_pct": metrics.coverage_pct if metrics else 0.0,
             "type_distribution": metrics.type_distribution if metrics else {},
+            "extraction_method": "docling",
+            "elapsed_seconds": round(time.monotonic() - doc_start, 1),
+            "classification_confidence": classification_confidence,
+            "classification_needs_input": classification_needs_input,
+            "had_json": has_json,
+            "citation_degraded": citation_degraded,
+            "chunks_count": 0,
+            "bates_gaps": metrics.bates_gaps if metrics else [],
+            "bates_duplicates": metrics.bates_duplicates if metrics else [],
+            "line_gaps": metrics.line_gaps if metrics else [],
         }
 
     except Exception as e:
@@ -211,6 +239,7 @@ def process_single_document(
             "stem": normalized,
             "status": "FAILED",
             "error": error_msg,
+            "elapsed_seconds": round(time.monotonic() - doc_start, 1),
         }
 
 
@@ -313,6 +342,8 @@ def process_documents_parallel(
                 conversion_timeout,
                 cleanup_json,
                 use_existing,
+                classification_confidence=cr.confidence if cr else None,
+                classification_needs_input=cr.needs_user_input if cr else False,
             )
             future_to_pdf[future] = (pdf_path, normalized)
 

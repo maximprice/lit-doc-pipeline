@@ -35,6 +35,11 @@ def _import_indexers():
 logger = logging.getLogger(__name__)
 
 
+PHRASE_BOOST_FACTOR = 5.0
+PHRASE_BOOST_MIN_WORDS = 4
+PHRASE_BOOST_CANDIDATE_FLOOR = 50
+
+
 class HybridRetriever:
     """
     Hybrid search combining BM25 and semantic vector search.
@@ -176,6 +181,47 @@ class HybridRetriever:
         else:
             logger.info("Vector search not available (Ollama not running)")
 
+    def _apply_phrase_boost(
+        self,
+        query: str,
+        results: List[SearchResult],
+    ) -> List[SearchResult]:
+        """Boost scores for chunks that contain the query as an exact substring.
+
+        For queries that look like phrases (>= PHRASE_BOOST_MIN_WORDS words),
+        any chunk whose text contains the query verbatim gets its score
+        multiplied by PHRASE_BOOST_FACTOR, then results are re-sorted.
+        """
+        import re
+
+        # Only boost for phrase-like queries
+        words = query.strip().split()
+        if len(words) < PHRASE_BOOST_MIN_WORDS:
+            return results
+
+        # Normalize: lowercase, collapse whitespace
+        normalized_query = re.sub(r'\s+', ' ', query.strip().lower())
+
+        boosted = 0
+        for result in results:
+            text = result.chunk.core_text.lower()
+            text = re.sub(r'\s+', ' ', text)
+            if normalized_query in text:
+                result.score *= PHRASE_BOOST_FACTOR
+                if result.bm25_score is not None:
+                    result.bm25_score *= PHRASE_BOOST_FACTOR
+                boosted += 1
+
+        if boosted:
+            logger.info("Phrase boost: %d/%d results matched exact query substring",
+                        boosted, len(results))
+            results.sort(key=lambda r: r.score, reverse=True)
+            # Re-assign ranks
+            for i, result in enumerate(results):
+                result.rank = i + 1
+
+        return results
+
     def search(
         self,
         query: str,
@@ -204,10 +250,15 @@ class HybridRetriever:
         if mode not in ["bm25", "semantic", "hybrid"]:
             raise ValueError(f"Invalid mode: {mode}. Must be 'bm25', 'semantic', or 'hybrid'")
 
-        # When reranking, fetch more candidates for the reranker to select from
+        # Over-fetch candidates when query looks like a phrase or reranking
+        query_words = query.strip().split()
+        is_phrase = len(query_words) >= PHRASE_BOOST_MIN_WORDS
+
         fetch_k = top_k
         if rerank:
             fetch_k = top_k * 3
+        if is_phrase:
+            fetch_k = max(fetch_k, PHRASE_BOOST_CANDIDATE_FLOOR)
 
         # Execute searches based on mode
         if mode == "bm25":
@@ -216,6 +267,10 @@ class HybridRetriever:
             results = self._search_semantic(query, fetch_k)
         else:  # hybrid
             results = self._search_hybrid(query, fetch_k)
+
+        # Apply phrase boost before reranking/trimming
+        if is_phrase:
+            results = self._apply_phrase_boost(query, results)
 
         # Apply cross-encoder reranking if requested
         if rerank and results:
@@ -231,6 +286,8 @@ class HybridRetriever:
             except ImportError:
                 logger.warning("reranker module not found, returning results without reranking")
                 results = results[:final_k]
+        else:
+            results = results[:top_k]
 
         return results
 

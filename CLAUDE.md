@@ -8,7 +8,89 @@ This is a litigation document processing pipeline that converts legal documents 
 
 **Current Status:** ✅ **FULLY OPERATIONAL** - Phases 1-5 complete + Production hardening + Performance optimization + User experience. 153 tests (137 passing). Core pipeline functional with high-quality citation tracking (99.2% paragraph, 84.5% column detection), chunking, hybrid search, reranking, and optional LLM enrichment. Benchmark: 98% Precision@5. Performance: 3-4x faster with parallel processing, 30x faster with incremental indexing. Progress bars provide visual feedback during all long-running operations.
 
-**Last Tested:** 2026-02-13 - Successfully processed 7 test documents (882 chunks, 32,583 citations) with search working perfectly.
+**Last Tested:** 2026-02-15 - 266 tests (204 passing, 62 skipped). Successfully processed 454-document Kindler Fuja corpus (16,113 chunks) with dashboard-style end-of-run report.
+
+## How to Run the Pipeline (Operator Guide)
+
+When the user asks you to process documents, follow this workflow.
+
+### 1. Questions to Ask Before Running
+
+Before starting, gather these inputs (ask only what's missing — don't re-ask if the user already provided them):
+
+| Question | Why it matters | Default |
+|----------|---------------|---------|
+| **Input directory** (where are the PDFs?) | Required — no default | — |
+| **Output directory** | Required — no default | — |
+| **Case type** (`patent`, `contract`, `employment`, etc.) | Affects enrichment context and citation format expectations | `patent` |
+| **Party names** (comma-separated) | Used by enrichment to identify relevant entities | `""` |
+| **Parallel or sequential?** | Parallel is 3-4x faster but uses more memory | `--parallel --max-workers 4` |
+| **Interactive or non-interactive?** | Interactive prompts for low-confidence classifications; non-interactive skips them | Interactive |
+| **Conversion timeout** | Large scanned PDFs can take 10+ minutes in Docling | `300` (seconds); use `600-1800` for large corpora |
+| **Build search indexes after?** | Indexing is a separate step; BM25 is instant, vector index requires Ollama running | Ask user |
+| **Run LLM enrichment?** | Adds summaries/categories/relevance — slow, optional | No |
+
+### 2. Recommended Command (Large Corpus)
+
+For a production run on hundreds of documents:
+
+```bash
+.venv/bin/python lit_pipeline.py process \
+  <INPUT_DIR> \
+  <OUTPUT_DIR> \
+  --parallel \
+  --max-workers 4 \
+  --case-type <CASE_TYPE> \
+  --parties "<PARTY1>, <PARTY2>" \
+  --cleanup-json \
+  --conversion-timeout 600 \
+  --non-interactive
+```
+
+For small test runs or when the user wants to review classifications:
+
+```bash
+.venv/bin/python lit_pipeline.py process \
+  <INPUT_DIR> \
+  <OUTPUT_DIR> \
+  --case-type <CASE_TYPE> \
+  --cleanup-json
+```
+
+### 3. After Processing: Build Indexes
+
+```bash
+# BM25 index (always works, instant)
+# Vector index (requires Ollama running with nomic-embed-text)
+.venv/bin/python lit_pipeline.py index <OUTPUT_DIR>/
+```
+
+**Known issue:** Ollama embedding can return 500 errors on some chunks (especially large tables or non-text content). The indexer skips those chunks gracefully — BM25 still indexes everything. If Ollama is not running, only BM25 will be built. BM25 alone achieves 98% Precision@5, so this is fine for most use cases.
+
+### 4. What to Show the User at the End
+
+The pipeline now prints a **dashboard-style report** automatically. After the run completes, review the report and highlight to the user:
+
+1. **ERRORS section** — Any documents that failed (timeouts, conversion errors). Tell the user which files failed and why. Suggest increasing `--conversion-timeout` if timeouts dominate.
+2. **WARNINGS section** — Quality issues that need attention:
+   - **Zero citations** — Documents with no citation data (may be cover letters, image-only pages, or conversion issues)
+   - **Low coverage < 50%** — Partial citation extraction (often scanned/degraded PDFs)
+   - **Zero chunks** — Documents that produced no searchable content
+   - **Low-confidence classification** — Documents the classifier was unsure about (confidence < 0.15)
+   - **Citation tracking degraded** — JSON was present but citation extraction threw an error
+3. **SUMMARY line** — Total OK/failed/skipped counts, chunk and citation totals, timing
+4. **Offer next steps:**
+   - "Want me to build the search indexes?" (if not done yet)
+   - "Want me to run a test search to verify results?"
+   - "Want me to re-run the N failed documents with a higher timeout?"
+   - "Want me to remove any specific documents from the corpus?"
+
+### 5. Search Tips
+
+- **BM25 mode** (`--mode bm25`) is fastest and most reliable — use for keyword/phrase searches
+- **Hybrid mode** (`--mode hybrid`) combines BM25 + vector similarity — requires Ollama
+- **Reranking** (`--rerank`) improves precision but adds ~19s/query latency
+- Search result previews only show the first ~500 characters of a chunk — the match may be deeper in the text. Use `--top-k 10` for broader coverage.
 
 ## Critical Requirements
 

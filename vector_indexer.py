@@ -103,9 +103,16 @@ class VectorIndexer:
         """Check if vector search is available."""
         return self._ollama_available
 
+    # nomic-embed-text context is 8192 tokens.  Token/char ratio varies by
+    # vocabulary density; legal text can be as low as ~2.5 chars/token.
+    # We try progressively shorter truncations on context-length errors.
+    _TRUNCATION_LIMITS = [5000, 3000, 2000]
+
     def _get_embedding(self, text: str) -> Optional[List[float]]:
         """
         Get embedding vector for text from Ollama.
+
+        Automatically truncates and retries on context-length errors.
 
         Args:
             text: Text to embed
@@ -116,26 +123,34 @@ class VectorIndexer:
         if not self._ollama_available:
             return None
 
-        try:
-            response = requests.post(
-                self.ollama_url,
-                json={
-                    "model": self.embedding_model,
-                    "prompt": text
-                },
-                timeout=30
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("embedding")
-            else:
-                logger.error(f"Ollama embedding failed: {response.status_code}")
+        # First attempt with text as-is (or capped at first limit)
+        limits = [len(text)] + self._TRUNCATION_LIMITS
+        for limit in limits:
+            prompt = text[:limit] if limit < len(text) else text
+            try:
+                response = requests.post(
+                    self.ollama_url,
+                    json={
+                        "model": self.embedding_model,
+                        "prompt": prompt
+                    },
+                    timeout=30
+                )
+                if response.status_code == 200:
+                    return response.json().get("embedding")
+                # Context-length error — try shorter
+                if response.status_code == 500 and limit == len(text):
+                    continue
+                if response.status_code == 500:
+                    continue
+                logger.error("Ollama embedding failed: %d", response.status_code)
+                return None
+            except Exception as e:
+                logger.error("Error getting embedding: %s", e)
                 return None
 
-        except Exception as e:
-            logger.error(f"Error getting embedding: {e}")
-            return None
+        logger.warning("Text too long for embedding even at %d chars", self._TRUNCATION_LIMITS[-1])
+        return None
 
     def _init_client(self) -> None:
         """Initialize Chroma client."""

@@ -42,6 +42,7 @@ tests/*_test_*/
 *~
 
 # Output directories
+output/
 converted/
 processed/
 context_cards/

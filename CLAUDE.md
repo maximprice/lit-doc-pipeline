@@ -21,7 +21,7 @@ Before starting, gather these inputs (ask only what's missing — don't re-ask i
 | Question | Why it matters | Default |
 |----------|---------------|---------|
 | **Input directory** (where are the PDFs?) | Required — no default | — |
-| **Output directory** | Required — no default | — |
+| **Output directory** | Where processed output goes. For new projects use `~/Dev/processed-lit-docs/<project_name>/`. For existing projects, use the project's existing output folder. | `~/Dev/processed-lit-docs/<project_name>/` |
 | **Case type** (`patent`, `contract`, `employment`, etc.) | Affects enrichment context and citation format expectations | `patent` |
 | **Party names** (comma-separated) | Used by enrichment to identify relevant entities | `""` |
 | **Parallel or sequential?** | Parallel is 3-4x faster but uses more memory | `--parallel --max-workers 4` |
@@ -212,11 +212,14 @@ The pipeline consists of 5 main steps:
 ## Quick Start: Running the Full Pipeline
 
 ### Step 1: Process Documents (Steps 1-4: Convert, Post-process, Citations, Chunking)
+
+**Output lives outside this repo** — default location is `~/Dev/processed-lit-docs/<project_name>/`.
+
 ```bash
 # RECOMMENDED: Parallel processing (3-4x faster)
 .venv/bin/python lit_pipeline.py process \
   tests/test_docs \
-  output \
+  ~/Dev/processed-lit-docs/my_case \
   --parallel \
   --max-workers 4 \
   --case-type patent \
@@ -233,11 +236,11 @@ The pipeline consists of 5 main steps:
 - Uses parallel processing (4 workers)
 - Cleans up JSON files after processing
 
-**Expected output:** `output/converted/` with .md, _citations.json, and **_chunks.json** files
+**Expected output:** `~/Dev/processed-lit-docs/my_case/converted/` with .md, _citations.json, and **_chunks.json** files
 
 ### Step 2: Build Search Indexes
 ```bash
-.venv/bin/python lit_pipeline.py index output/
+.venv/bin/python lit_pipeline.py index ~/Dev/processed-lit-docs/my_case/
 ```
 
 **What this does:**
@@ -245,13 +248,13 @@ The pipeline consists of 5 main steps:
 - Builds ChromaDB vector index via Ollama (~90s for 882 chunks)
 - Uses incremental indexing (30x faster for unchanged files)
 
-**Expected output:** `output/indexes/bm25_index.pkl` and `output/indexes/chroma_db/`
+**Expected output:** `~/Dev/processed-lit-docs/my_case/indexes/bm25_index.pkl` and `.../indexes/chroma_db/`
 
 ### Step 3: Test Search
 ```bash
 # Hybrid search with reranking (best quality)
 .venv/bin/python lit_pipeline.py search \
-  output/ \
+  ~/Dev/processed-lit-docs/my_case/ \
   "TWT technology wireless networking" \
   --mode hybrid \
   --rerank \
@@ -259,13 +262,13 @@ The pipeline consists of 5 main steps:
 
 # BM25-only search (fastest)
 .venv/bin/python lit_pipeline.py search \
-  output/ \
+  ~/Dev/processed-lit-docs/my_case/ \
   "patent claim construction" \
   --mode bm25 \
   --top-k 5
 
 # View statistics
-.venv/bin/python lit_pipeline.py stats output/
+.venv/bin/python lit_pipeline.py stats ~/Dev/processed-lit-docs/my_case/
 ```
 
 ### Step 4: Remove a Document (Optional)
@@ -274,14 +277,14 @@ To surgically remove a processed document from all output files and search index
 
 ```bash
 # Remove by document stem (normalized filename)
-.venv/bin/python lit_pipeline.py remove output/ "daniel_alexander_10_24_2025"
+.venv/bin/python lit_pipeline.py remove ~/Dev/processed-lit-docs/my_case/ "daniel_alexander_10_24_2025"
 
 # Also accepts original filenames (auto-normalized to stem)
-.venv/bin/python lit_pipeline.py remove output/ "Daniel Alexander - 10-24-2025"
+.venv/bin/python lit_pipeline.py remove ~/Dev/processed-lit-docs/my_case/ "Daniel Alexander - 10-24-2025"
 ```
 
 **What this does:**
-- Deletes per-document files (.md, _citations.json, _chunks.json) from `output/converted/`
+- Deletes per-document files (.md, _citations.json, _chunks.json) from `<output>/converted/`
 - Removes matching entries from the BM25 index (filters sparse matrix rows)
 - Removes matching entries from the ChromaDB vector index (`collection.delete()`)
 - Cleans up pipeline state and index state JSON files
@@ -291,19 +294,19 @@ To surgically remove a processed document from all output files and search index
 
 ```bash
 # Sequential processing (slower, less memory)
-.venv/bin/python lit_pipeline.py process tests/test_docs output/ --case-type patent
+.venv/bin/python lit_pipeline.py process tests/test_docs ~/Dev/processed-lit-docs/my_case/ --case-type patent
 
 # Non-interactive processing (skip prompts for low-confidence classifications)
-.venv/bin/python lit_pipeline.py process tests/test_docs output/ --non-interactive
+.venv/bin/python lit_pipeline.py process tests/test_docs ~/Dev/processed-lit-docs/my_case/ --non-interactive
 
 # Resume after interruption
-.venv/bin/python lit_pipeline.py process tests/test_docs output/ --resume
+.venv/bin/python lit_pipeline.py process tests/test_docs ~/Dev/processed-lit-docs/my_case/ --resume
 
 # Force reprocessing (ignore state)
-.venv/bin/python lit_pipeline.py process tests/test_docs output/ --force
+.venv/bin/python lit_pipeline.py process tests/test_docs ~/Dev/processed-lit-docs/my_case/ --force
 
 # Force rebuild indexes
-.venv/bin/python lit_pipeline.py index output/ --force-rebuild
+.venv/bin/python lit_pipeline.py index ~/Dev/processed-lit-docs/my_case/ --force-rebuild
 
 # Classify documents without processing
 .venv/bin/python lit_pipeline.py classify tests/test_docs/
@@ -311,7 +314,7 @@ To surgically remove a processed document from all output files and search index
 .venv/bin/python lit_pipeline.py classify tests/test_docs/ --show-profiles
 
 # Optional: LLM enrichment (adds summaries, categories, relevance scores)
-.venv/bin/python lit_pipeline.py enrich output/converted/ --backend ollama
+.venv/bin/python lit_pipeline.py enrich ~/Dev/processed-lit-docs/my_case/converted/ --backend ollama
 ```
 
 ## Key Data Structures
@@ -487,6 +490,22 @@ lit-doc-pipeline/
 - **BM25 Latency:** <1ms per query
 - **Rerank Latency:** ~19s per query (bge-reranker-v2-m3 with 30 candidates on MPS)
 - Run `benchmark.py` to reproduce
+
+## Litigation Skills Suite
+
+Seven skills in `~/.claude/skills/` consume pipeline output to produce litigation work product with traceable citations. Each skill runs Phase 0 (pipeline discovery) to locate chunk files and search indexes, then uses the search CLI for evidence retrieval.
+
+| Slash Command | Skill File | Purpose |
+|---------------|-----------|---------|
+| `/draft-motion` | `draft-motion.md` | Motions, oppositions, replies (full intent-locking protocol) |
+| `/memo-to-file` | `memo-to-file.md` | Internal memos (strategy, research, case eval, claim analysis) |
+| `/depo-prep` | `depo-prep.md` | Deposition outlines, questions, exhibits, impeachment |
+| `/draft-pleading` | `draft-pleading.md` | Complaints, answers, counterclaims, ITC complaints |
+| `/discovery-draft` | `discovery-draft.md` | Interrogatories, RFPs, RFAs (offensive/defensive) |
+| `/discovery-respond` | `discovery-respond.md` | Discovery responses and objections (offensive/defensive) |
+| `/build-context` | `reusable-context-creator.md` | Portable context file (≤150k tokens) from knowledge base |
+
+Skills default to patent litigation conventions unless `case_context.json` or user input indicates otherwise. All factual citations use the chunk's `citation_string` verbatim.
 
 ## Reference Documents
 

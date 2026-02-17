@@ -241,13 +241,12 @@ class DocumentChunker:
                     qa_marker = match.group(2)
                     text = match.group(3)
 
-                    # Look up citation for this line
+                    # Look up citation for this line (PyMuPDF key first, then Docling fallback)
                     current_page = current_metadata.transcript_pages[-1] if current_metadata.transcript_pages else 1
                     line_page = current_page
                     line_bates = None
-                    cite_key = f"line_P{current_page}_L{line_num}"
-                    if cite_key in citations:
-                        cit = citations[cite_key]
+                    cit = self._find_deposition_citation(citations, current_page, line_num)
+                    if cit:
                         page = cit.get("page", current_page)
                         line_page = page
                         if page not in current_metadata.pages:
@@ -322,6 +321,38 @@ class DocumentChunker:
             chunks.append(chunk)
 
         return chunks
+
+    def _find_deposition_citation(
+        self,
+        citations: dict,
+        page: int,
+        line_num: int,
+    ) -> Optional[dict]:
+        """Look up citation data for a deposition line.
+
+        Tries the PyMuPDF key format first (line_P{page}_L{line}), then
+        falls back to scanning all citations for a matching page + line_start
+        (Docling #/texts/N key format).
+
+        Returns the citation dict, or None if not found.
+        """
+        # Fast path: PyMuPDF key format
+        pymupdf_key = f"line_P{page}_L{line_num}"
+        if pymupdf_key in citations:
+            return citations[pymupdf_key]
+
+        # Fallback: scan for Docling-style keys with matching page + line_start
+        for key, cit in citations.items():
+            if (cit.get("transcript_page") == page
+                    and cit.get("line_start") == line_num):
+                return cit
+            # Also check page field for non-transcript citations
+            if (cit.get("page") == page
+                    and cit.get("line_start") == line_num
+                    and cit.get("type") == "transcript_line"):
+                return cit
+
+        return None
 
     # ── Expert Report Chunking ───────────────────────────────────────
 

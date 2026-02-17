@@ -158,7 +158,7 @@ class BM25Indexer:
         return normalized
 
     def _save_index(self) -> None:
-        """Save index to disk."""
+        """Save index to disk atomically (write to temp, then rename)."""
         index_path = self.index_dir / "bm25_index.pkl"
 
         index_data = {
@@ -169,8 +169,10 @@ class BM25Indexer:
             "b": self.b
         }
 
-        with open(index_path, 'wb') as f:
+        temp_path = index_path.with_suffix('.tmp')
+        with open(temp_path, 'wb') as f:
             pickle.dump(index_data, f)
+        temp_path.replace(index_path)
 
         logger.info(f"BM25 index saved to {index_path}")
 

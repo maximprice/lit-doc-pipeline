@@ -447,9 +447,11 @@ class LLMEnricher:
             if self.delay_between_calls > 0:
                 time.sleep(self.delay_between_calls)
 
-        # Write back
-        with open(path, 'w') as f:
+        # Write back atomically (write to temp, then rename)
+        temp_path = path.with_suffix('.tmp')
+        with open(temp_path, 'w') as f:
             json.dump(chunks_data, f, indent=2)
+        temp_path.replace(path)
 
         stats.duration_seconds = time.time() - start_time
         logger.info(stats.summary())
@@ -698,8 +700,10 @@ def apply_enrichment(
     llm_quotes = validated.get("key_quotes", [])
     target["key_quotes"] = list(dict.fromkeys(existing_quotes + llm_quotes))
 
-    # Write back
-    with open(path, 'w') as f:
+    # Write back atomically (write to temp, then rename)
+    temp_path = path.with_suffix('.tmp')
+    with open(temp_path, 'w') as f:
         json.dump(chunks_data, f, indent=2)
+    temp_path.replace(path)
 
     return True

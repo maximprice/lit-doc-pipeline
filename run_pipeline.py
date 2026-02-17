@@ -392,14 +392,36 @@ def run_pipeline(
     pdfs = filtered_pdfs
 
     # Build source_path_map: normalized_stem -> original relative path
+    # Detect and disambiguate collisions (e.g., "Foo-Bar.pdf" and "foo_bar.pdf")
     source_path_map = {}
+    stem_to_pdf = {}  # normalized_stem -> pdf_path (for collision detection)
     for pdf_path in pdfs:
         normalized = normalize_stem(pdf_path.stem)
         try:
             rel_path = str(pdf_path.relative_to(input_dir))
         except ValueError:
             rel_path = pdf_path.name
+
+        if normalized in source_path_map:
+            # Collision: two files map to the same stem
+            existing = stem_to_pdf[normalized].name
+            suffix = 2
+            disambiguated = f"{normalized}_{suffix}"
+            while disambiguated in source_path_map:
+                suffix += 1
+                disambiguated = f"{normalized}_{suffix}"
+            logger.warning(
+                "Stem collision: '%s' and '%s' both normalize to '%s'. "
+                "Renaming second to '%s'.",
+                existing, pdf_path.name, normalized, disambiguated,
+            )
+            normalized = disambiguated
+
         source_path_map[normalized] = rel_path
+        stem_to_pdf[normalized] = pdf_path
+
+    # Build reverse map: pdf_path -> disambiguated stem (used by both parallel and sequential)
+    pdf_to_stem = {v: k for k, v in stem_to_pdf.items()}
 
     # Check if parallel processing is requested
     if parallel:
@@ -408,8 +430,8 @@ def run_pipeline(
 
         logger.info("Using parallel processing with %d workers", max_workers)
 
-        # Build normalized stems map
-        normalized_stems = {pdf.stem: normalize_stem(pdf.stem) for pdf in pdfs}
+        # Build normalized stems map (respects disambiguation)
+        normalized_stems = {pdf.stem: pdf_to_stem.get(pdf, normalize_stem(pdf.stem)) for pdf in pdfs}
 
         # Process documents in parallel
         results = process_documents_parallel(
@@ -437,7 +459,7 @@ def run_pipeline(
 
         for pdf_path in pbar:
             stem = pdf_path.stem
-            normalized = normalize_stem(stem)
+            normalized = pdf_to_stem.get(pdf_path, normalize_stem(stem))
 
             # Get document state
             doc_state = state.get_document(normalized, pdf_path.name)

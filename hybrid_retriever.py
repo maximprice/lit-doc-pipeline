@@ -135,11 +135,13 @@ class HybridRetriever:
         self._save_chunk_registry()
 
     def _save_chunk_registry(self) -> None:
-        """Save chunk registry to disk for fast loading."""
+        """Save chunk registry to disk atomically (write to temp, then rename)."""
         registry_path = self.index_dir / "chunk_registry.pkl"
 
-        with open(registry_path, 'wb') as f:
+        temp_path = registry_path.with_suffix('.tmp')
+        with open(temp_path, 'wb') as f:
             pickle.dump(self.chunks, f)
+        temp_path.replace(registry_path)
 
         logger.info(f"Chunk registry saved: {len(self.chunks)} chunks")
 

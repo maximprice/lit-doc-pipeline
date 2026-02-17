@@ -294,7 +294,7 @@ def _detect_page_marker(spans: list) -> Optional[int]:
     x0 = min(s["x0"] for s in spans)
     y_mid = spans[0]["y_mid"]
 
-    if x0 > PAGE_MARKER_X_THRESHOLD or y_mid < PAGE_MARKER_Y_THRESHOLD:
+    if x0 > PAGE_MARKER_X_THRESHOLD and y_mid < PAGE_MARKER_Y_THRESHOLD:
         return int(match.group(1))
 
     return None

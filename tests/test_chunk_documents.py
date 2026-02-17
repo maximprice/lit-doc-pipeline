@@ -1,6 +1,8 @@
 """Tests for document chunking."""
 
 import json
+import re
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -155,4 +157,79 @@ class TestChunkMetadata:
             assert len(data) > 0
 
 
-import re
+class TestDepositionCitationKeyFallback:
+    """Test that deposition chunker finds citations from both PyMuPDF and Docling key formats."""
+
+    def test_pymupdf_keys_still_work(self):
+        """Citations keyed as line_P{page}_L{line} (PyMuPDF) should still be found."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stem = "test_depo"
+            md_content = "[PAGE:10]\n 5  Q  What happened next?\n 6  A  Nothing.\n"
+            citations = {
+                "line_P10_L5": {
+                    "page": 10, "line_start": 5, "line_end": 5,
+                    "type": "transcript_line", "transcript_page": 10,
+                    "bates": "TEST_0001",
+                },
+                "line_P10_L6": {
+                    "page": 10, "line_start": 6, "line_end": 6,
+                    "type": "transcript_line", "transcript_page": 10,
+                    "bates": "TEST_0001",
+                },
+            }
+            Path(tmpdir, f"{stem}.md").write_text(md_content)
+            Path(tmpdir, f"{stem}_citations.json").write_text(json.dumps(citations))
+
+            chunker = DocumentChunker(tmpdir)
+            chunks = chunker.chunk_document(stem, DocumentType.DEPOSITION, "test.pdf")
+
+            assert len(chunks) >= 1
+            # Should have picked up bates from PyMuPDF-keyed citations
+            assert any(c.citation.get("bates_range") for c in chunks)
+
+    def test_docling_keys_fallback(self):
+        """Citations keyed as #/texts/N (Docling) should be found via fallback scan."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stem = "test_depo_docling"
+            md_content = "[PAGE:14]\n 5  Q  Tell me about it.\n 6  A  Sure thing.\n"
+            # Docling-style keys with matching page + line_start fields
+            citations = {
+                "#/texts/42": {
+                    "page": 14, "line_start": 5, "line_end": 5,
+                    "type": "transcript_line", "transcript_page": 14,
+                    "bates": "DOC_0050",
+                },
+                "#/texts/43": {
+                    "page": 14, "line_start": 6, "line_end": 6,
+                    "type": "transcript_line", "transcript_page": 14,
+                    "bates": "DOC_0050",
+                },
+            }
+            Path(tmpdir, f"{stem}.md").write_text(md_content)
+            Path(tmpdir, f"{stem}_citations.json").write_text(json.dumps(citations))
+
+            chunker = DocumentChunker(tmpdir)
+            chunks = chunker.chunk_document(stem, DocumentType.DEPOSITION, "test.pdf")
+
+            assert len(chunks) >= 1
+            chunk = chunks[0]
+            # Should have picked up bates from Docling-keyed citations via fallback
+            assert chunk.citation.get("bates_range"), (
+                "Docling #/texts/N citations should be found by fallback scan"
+            )
+            assert "DOC_0050" in chunk.citation["bates_range"]
+
+    def test_no_citations_returns_empty(self):
+        """Deposition chunker returns [] when citations dict is empty."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stem = "test_depo_empty"
+            md_content = "[PAGE:1]\n 1  Q  Hello?\n 2  A  Hi.\n"
+            citations = {}  # Empty — no citations at all
+            Path(tmpdir, f"{stem}.md").write_text(md_content)
+            Path(tmpdir, f"{stem}_citations.json").write_text(json.dumps(citations))
+
+            chunker = DocumentChunker(tmpdir)
+            chunks = chunker.chunk_document(stem, DocumentType.DEPOSITION, "test.pdf")
+
+            # Empty citations → chunker returns [] (by design, citations are required)
+            assert len(chunks) == 0

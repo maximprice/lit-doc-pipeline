@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from pymupdf_extractor import is_text_based_pdf, extract_deposition
+from pymupdf_extractor import is_text_based_pdf, extract_deposition, _detect_page_marker
 
 TEST_DOCS = Path(__file__).parent / "test_docs"
 ALEXANDER_PDF = TEST_DOCS / "Daniel Alexander - 10-24-2025.pdf"
@@ -130,3 +130,33 @@ class TestExtractDeposition:
             assert header_pattern not in line.upper(), (
                 f"CONFIDENTIAL header leaked into content: {line[:80]}"
             )
+
+
+class TestPageMarkerDetection:
+    """Test _detect_page_marker correctly requires BOTH right-side AND top position."""
+
+    def _make_span(self, text, x0, y_mid):
+        """Create a mock span dict."""
+        return {"text": text, "x0": x0, "y_mid": y_mid, "x1": x0 + 50, "y0": y_mid - 5, "y1": y_mid + 5}
+
+    def test_valid_page_marker_top_right(self):
+        """Page N at top-right should be detected."""
+        spans = [self._make_span("Page 5", x0=450, y_mid=80)]
+        assert _detect_page_marker(spans) == 5
+
+    def test_mid_page_right_side_not_marker(self):
+        """Page N on the right side but mid-page should NOT be detected."""
+        # x0=450 (right side) but y_mid=400 (middle of page)
+        spans = [self._make_span("Page 5", x0=450, y_mid=400)]
+        assert _detect_page_marker(spans) is None
+
+    def test_top_left_not_marker(self):
+        """Page N near top but on the left side should NOT be detected."""
+        # x0=50 (left side) but y_mid=80 (top of page)
+        spans = [self._make_span("Page 5", x0=50, y_mid=80)]
+        assert _detect_page_marker(spans) is None
+
+    def test_non_page_text_not_marker(self):
+        """Random text should not be detected as a page marker."""
+        spans = [self._make_span("Hello World", x0=450, y_mid=80)]
+        assert _detect_page_marker(spans) is None

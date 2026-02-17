@@ -397,7 +397,7 @@ See documentation for more:
 
 **Documentation:**
 - [NEXT_STEPS.md](NEXT_STEPS.md) - Roadmap and remaining work
-- [CLAUDE.md](CLAUDE.md) - Implementation guidance
+- [CLAUDE.md](../CLAUDE.md) - Implementation guidance
 - [README.md](README.md) - Project overview
 
 **Key Files:**

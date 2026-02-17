@@ -109,7 +109,7 @@ The benchmark measures Precision@K, hit rate, and per-query latency across BM25-
 - [ERROR_HANDLING.md](ERROR_HANDLING.md) - Error handling & recovery guide
 - [PERFORMANCE.md](PERFORMANCE.md) - Performance optimization guide
 - [NEXT_STEPS.md](NEXT_STEPS.md) - Roadmap and remaining work
-- [CLAUDE.md](CLAUDE.md) - Implementation guidance
+- [CLAUDE.md](../CLAUDE.md) - Implementation guidance
 
 ## License
 

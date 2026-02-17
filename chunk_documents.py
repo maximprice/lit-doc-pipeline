@@ -79,6 +79,7 @@ class DocumentChunker:
         stem: str,
         doc_type: DocumentType = DocumentType.UNKNOWN,
         source_file: str = "",
+        source_path: str = "",
     ) -> List[Chunk]:
         """
         Create chunks from a processed document.
@@ -104,13 +105,13 @@ class DocumentChunker:
         # Create chunks from sections - route by type sets
         chunks = []
         if doc_type in self.TRANSCRIPT_TYPES:
-            chunks = self._chunk_deposition(sections, citations, stem, source_file)
+            chunks = self._chunk_deposition(sections, citations, stem, source_file, source_path=source_path)
         elif doc_type in self.PARAGRAPH_TYPES:
-            chunks = self._chunk_expert_report(sections, citations, stem, source_file)
+            chunks = self._chunk_expert_report(sections, citations, stem, source_file, source_path=source_path)
         elif doc_type in self.PATENT_TYPES:
-            chunks = self._chunk_patent(sections, citations, stem, source_file)
+            chunks = self._chunk_patent(sections, citations, stem, source_file, source_path=source_path)
         else:
-            chunks = self._chunk_generic(sections, citations, stem, source_file)
+            chunks = self._chunk_generic(sections, citations, stem, source_file, source_path=source_path)
 
         logger.info("Created %d chunks from %s", len(chunks), stem)
 
@@ -209,6 +210,7 @@ class DocumentChunker:
         citations: dict,
         stem: str,
         source_file: str,
+        source_path: str = "",
     ) -> List[Chunk]:
         """
         Chunk deposition preserving Q/A pairs.
@@ -281,6 +283,7 @@ class DocumentChunker:
                             chunk_text, current_metadata, stem, source_file,
                             len(chunks), DocumentType.DEPOSITION,
                             page_map=page_map, bates_map=bates_map,
+                            source_path=source_path,
                         )
                         chunks.append(chunk)
 
@@ -314,6 +317,7 @@ class DocumentChunker:
                 chunk_text, current_metadata, stem, source_file,
                 len(chunks), DocumentType.DEPOSITION,
                 page_map=page_map, bates_map=bates_map,
+                source_path=source_path,
             )
             chunks.append(chunk)
 
@@ -327,6 +331,7 @@ class DocumentChunker:
         citations: dict,
         stem: str,
         source_file: str,
+        source_path: str = "",
     ) -> List[Chunk]:
         """
         Chunk expert report by paragraphs with inline footnotes.
@@ -358,6 +363,7 @@ class DocumentChunker:
                         chunk_text, current_metadata, stem, source_file,
                         len(chunks), DocumentType.EXPERT_REPORT,
                         page_map=page_map, bates_map=bates_map,
+                        source_path=source_path,
                     )
                     chunks.append(chunk)
 
@@ -382,6 +388,7 @@ class DocumentChunker:
                 chunk_text, current_metadata, stem, source_file,
                 len(chunks), DocumentType.EXPERT_REPORT,
                 page_map=page_map, bates_map=bates_map,
+                source_path=source_path,
             )
             chunks.append(chunk)
 
@@ -395,11 +402,12 @@ class DocumentChunker:
         citations: dict,
         stem: str,
         source_file: str,
+        source_path: str = "",
     ) -> List[Chunk]:
         """Chunk patent preserving claim structure."""
         # For now, use generic chunking
         # TODO: Implement claim-aware chunking
-        return self._chunk_generic(sections, citations, stem, source_file)
+        return self._chunk_generic(sections, citations, stem, source_file, source_path=source_path)
 
     # ── Generic Chunking ─────────────────────────────────────────────
 
@@ -409,6 +417,7 @@ class DocumentChunker:
         citations: dict,
         stem: str,
         source_file: str,
+        source_path: str = "",
     ) -> List[Chunk]:
         """Generic chunking by token count."""
         chunks = []
@@ -437,6 +446,7 @@ class DocumentChunker:
                         chunk_text, current_metadata, stem, source_file,
                         len(chunks), DocumentType.UNKNOWN,
                         page_map=page_map, bates_map=bates_map,
+                        source_path=source_path,
                     )
                     chunks.append(chunk)
 
@@ -460,6 +470,7 @@ class DocumentChunker:
                 chunk_text, current_metadata, stem, source_file,
                 len(chunks), DocumentType.UNKNOWN,
                 page_map=page_map, bates_map=bates_map,
+                source_path=source_path,
             )
             chunks.append(chunk)
 
@@ -557,6 +568,7 @@ class DocumentChunker:
         doc_type: DocumentType,
         page_map: Optional[List[Optional[int]]] = None,
         bates_map: Optional[List[Optional[str]]] = None,
+        source_path: str = "",
     ) -> Chunk:
         """Create a Chunk object with complete citation metadata."""
         # Generate chunk ID
@@ -605,6 +617,7 @@ class DocumentChunker:
             citation_string=citation_string,
             tokens=tokens,
             doc_type=doc_type,
+            source_path=source_path or None,
         )
 
     def _generate_citation_string(
@@ -671,6 +684,7 @@ def chunk_all_documents(
     converted_dir: str,
     target_tokens: int = DEFAULT_TARGET_TOKENS,
     doc_type_map: Optional[Dict[str, DocumentType]] = None,
+    source_path_map: Optional[Dict[str, str]] = None,
 ) -> Dict[str, List[Chunk]]:
     """
     Chunk all documents in a converted directory.
@@ -679,6 +693,7 @@ def chunk_all_documents(
         converted_dir: Directory containing .md and _citations.json files
         target_tokens: Target chunk size in tokens
         doc_type_map: Pre-computed mapping of stem -> DocumentType from classifier
+        source_path_map: Pre-computed mapping of stem -> original relative path
 
     Returns:
         Dict mapping stem to list of chunks
@@ -687,6 +702,8 @@ def chunk_all_documents(
     chunker = DocumentChunker(str(converted_dir), target_tokens=target_tokens)
     if doc_type_map is None:
         doc_type_map = {}
+    if source_path_map is None:
+        source_path_map = {}
 
     results = {}
     for md_file in sorted(converted_dir.glob("*.md")):
@@ -703,7 +720,8 @@ def chunk_all_documents(
         if doc_type == DocumentType.UNKNOWN:
             doc_type = _infer_type_from_citations(citations_file)
 
-        chunks = chunker.chunk_document(stem, doc_type, md_file.name)
+        source_path = source_path_map.get(stem, "")
+        chunks = chunker.chunk_document(stem, doc_type, md_file.name, source_path=source_path)
         results[stem] = chunks
 
     return results

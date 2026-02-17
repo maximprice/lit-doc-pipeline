@@ -168,6 +168,7 @@ def build_indexes(output_dir: str, config_path: Optional[str] = None, force: boo
                     claims_addressed=chunk_data.get("claims_addressed"),
                     classification_method=chunk_data.get("classification_method"),
                     llm_backend=chunk_data.get("llm_backend"),
+                    source_path=chunk_data.get("source_path"),
                 )
                 chunks.append(chunk)
 
@@ -374,14 +375,17 @@ def search_and_display(
         return
 
     for result in results:
-        print(f"{'\u2500' * 70}")
+        separator = '\u2500' * 70
+        print(separator)
         print(f"Result {result.rank}/{len(results)} (Score: {result.score:.3f})")
-        print(f"{'\u2500' * 70}")
+        print(separator)
 
         # Document info
         chunk = result.chunk
         doc_name = "_".join(chunk.chunk_id.split("_")[:-2])
         print(f"Document: {doc_name}")
+        if chunk.source_path:
+            print(f"Source: {chunk.source_path}")
         print(f"Type: {chunk.doc_type.value if hasattr(chunk.doc_type, 'value') else chunk.doc_type}")
         print(f"Citation: {chunk.citation_string}")
         print(f"Pages: {', '.join(map(str, chunk.pages))}")

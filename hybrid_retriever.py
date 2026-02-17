@@ -121,6 +121,7 @@ class HybridRetriever:
                         claims_addressed=chunk_data.get("claims_addressed"),
                         classification_method=chunk_data.get("classification_method"),
                         llm_backend=chunk_data.get("llm_backend"),
+                        source_path=chunk_data.get("source_path"),
                     )
                     self.chunks[chunk.chunk_id] = chunk
                     chunk_count += 1

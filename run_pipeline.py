@@ -391,6 +391,16 @@ def run_pipeline(
                     len(skipped_condensed), ", ".join(skipped_condensed))
     pdfs = filtered_pdfs
 
+    # Build source_path_map: normalized_stem -> original relative path
+    source_path_map = {}
+    for pdf_path in pdfs:
+        normalized = normalize_stem(pdf_path.stem)
+        try:
+            rel_path = str(pdf_path.relative_to(input_dir))
+        except ValueError:
+            rel_path = pdf_path.name
+        source_path_map[normalized] = rel_path
+
     # Check if parallel processing is requested
     if parallel:
         if max_workers is None:
@@ -768,7 +778,7 @@ def run_pipeline(
     logger.info("[Step 4] Chunking documents...")
 
     try:
-        all_chunks = chunk_all_documents(str(converted_dir), doc_type_map=doc_type_map)
+        all_chunks = chunk_all_documents(str(converted_dir), doc_type_map=doc_type_map, source_path_map=source_path_map)
 
         # Save chunks to individual files
         for stem, chunks in all_chunks.items():

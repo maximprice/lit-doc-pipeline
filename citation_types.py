@@ -143,6 +143,7 @@ class Chunk:
     claims_addressed: Optional[List[int]] = None
     classification_method: Optional[str] = None
     llm_backend: Optional[str] = None
+    source_path: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -169,6 +170,8 @@ class Chunk:
             d["classification_method"] = self.classification_method
         if self.llm_backend is not None:
             d["llm_backend"] = self.llm_backend
+        if self.source_path is not None:
+            d["source_path"] = self.source_path
         return d
 
 

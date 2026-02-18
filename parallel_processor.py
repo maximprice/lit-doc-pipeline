@@ -22,6 +22,7 @@ from docling_converter import DoclingConverter
 from pipeline_state import PipelineState
 from post_processor import PostProcessor
 from pymupdf_extractor import is_text_based_pdf, extract_deposition
+from text_extractor import is_text_transcript, extract_text_deposition
 
 # Type sets for handler routing
 TRANSCRIPT_TYPES = {DocumentType.DEPOSITION, DocumentType.HEARING_TRANSCRIPT}
@@ -75,6 +76,40 @@ def process_single_document(
     try:
         logger.info("Processing: %s (worker PID: %d)", pdf_path.name, os.getpid())
 
+        # ── Text transcript fast path ────────────────────────────
+        if (pdf_path.suffix.lower() == ".txt"
+            and doc_type in TRANSCRIPT_TYPES
+            and is_text_transcript(str(pdf_path))):
+
+            logger.info("[TextExtractor] Plain-text transcript detected")
+            txt_result = extract_text_deposition(str(pdf_path), str(converted_dir))
+            logger.info("  Extracted %d lines, %d citations",
+                       txt_result["line_count"],
+                       txt_result["citation_count"])
+
+            return {
+                "file": pdf_path.name,
+                "source_path": str(pdf_path),
+                "stem": normalized,
+                "status": "OK",
+                "doc_type": (doc_type or DocumentType.DEPOSITION).value,
+                "md_file": Path(txt_result["md_path"]).name,
+                "json_file": None,
+                "citations_count": txt_result["citation_count"],
+                "coverage_pct": 100.0,
+                "type_distribution": {"transcript_line": txt_result["citation_count"]},
+                "extraction_method": "text_extractor",
+                "elapsed_seconds": round(time.monotonic() - doc_start, 1),
+                "classification_confidence": classification_confidence,
+                "classification_needs_input": classification_needs_input,
+                "had_json": False,
+                "citation_degraded": False,
+                "chunks_count": 0,
+                "bates_gaps": [],
+                "bates_duplicates": [],
+                "line_gaps": [],
+            }
+
         # ── PyMuPDF fast path for text-based depositions ─────────────
         if doc_type in TRANSCRIPT_TYPES and is_text_based and is_text_based_pdf(str(pdf_path)):
             logger.info("[PyMuPDF] Text-based deposition detected")
@@ -85,6 +120,7 @@ def process_single_document(
 
             return {
                 "file": pdf_path.name,
+                "source_path": str(pdf_path),
                 "stem": normalized,
                 "status": "OK",
                 "doc_type": DocumentType.DEPOSITION.value,
@@ -130,6 +166,7 @@ def process_single_document(
                 logger.error("  FAILED: %s", error_msg)
                 return {
                     "file": pdf_path.name,
+                    "source_path": str(pdf_path),
                     "stem": normalized,
                     "status": "FAILED",
                     "error": error_msg,
@@ -158,6 +195,7 @@ def process_single_document(
             logger.error("  %s", error_msg)
             return {
                 "file": pdf_path.name,
+                "source_path": str(pdf_path),
                 "stem": normalized,
                 "status": "FAILED",
                 "error": error_msg,
@@ -211,6 +249,7 @@ def process_single_document(
         citation_degraded = (has_json and metrics is None)
         return {
             "file": pdf_path.name,
+            "source_path": str(pdf_path),
             "stem": normalized,
             "status": "OK",
             "doc_type": doc_type.value,
@@ -236,6 +275,7 @@ def process_single_document(
         logger.error(error_msg, exc_info=True)
         return {
             "file": pdf_path.name,
+            "source_path": str(pdf_path),
             "stem": normalized,
             "status": "FAILED",
             "error": error_msg,
@@ -287,13 +327,19 @@ def process_documents_parallel(
     for pdf_path in pdfs:
         stem = pdf_path.stem
         normalized = normalized_stems.get(stem, stem.lower())
-        doc_state = state.get_document(normalized, pdf_path.name)
+        _file_size = pdf_path.stat().st_size if pdf_path.exists() else None
+        doc_state = state.get_document(
+            normalized, pdf_path.name,
+            source_path=str(pdf_path),
+            file_size_bytes=_file_size,
+        )
 
         # Skip if completed and not forcing
         if not force and doc_state.status == "completed":
             logger.info("Skipping %s (already completed)", pdf_path.name)
             results.append({
                 "file": pdf_path.name,
+                "source_path": str(pdf_path),
                 "stem": normalized,
                 "status": "SKIPPED",
                 "reason": "Already completed",
@@ -305,6 +351,7 @@ def process_documents_parallel(
             logger.info("Skipping %s (failed %d times)", pdf_path.name, doc_state.retry_count)
             results.append({
                 "file": pdf_path.name,
+                "source_path": str(pdf_path),
                 "stem": normalized,
                 "status": "SKIPPED",
                 "reason": f"Failed {doc_state.retry_count} times",
@@ -388,6 +435,7 @@ def process_documents_parallel(
 
                 results.append({
                     "file": pdf_path.name,
+                    "source_path": str(pdf_path),
                     "stem": normalized,
                     "status": "FAILED",
                     "error": error_msg,

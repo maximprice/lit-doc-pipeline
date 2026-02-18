@@ -32,6 +32,7 @@ from parallel_processor import process_documents_parallel, get_optimal_worker_co
 from pipeline_state import PipelineState
 from post_processor import PostProcessor
 from pymupdf_extractor import is_text_based_pdf, extract_deposition
+from text_extractor import is_text_transcript, extract_text_deposition
 
 logging.basicConfig(
     level=logging.INFO,
@@ -174,7 +175,7 @@ def generate_pipeline_report(
             method = r.get("extraction_method", "docling")
             method_counts[method] = method_counts.get(method, 0) + 1
 
-        method_labels = {"docling": "docling", "pymupdf": "pymupdf (fast path)"}
+        method_labels = {"docling": "docling", "pymupdf": "pymupdf (fast path)", "text_extractor": "text_extractor (fast path)"}
         for method, count in sorted(method_counts.items(), key=lambda x: -x[1]):
             pct = 100.0 * count / len(ok_results)
             label = method_labels.get(method, method)
@@ -186,8 +187,12 @@ def generate_pipeline_report(
         out(f" ERRORS ({len(failed_results)} document{'s' if len(failed_results) != 1 else ''})")
         out(" " + "-" * len(f"ERRORS ({len(failed_results)} document{'s' if len(failed_results) != 1 else ''})"))
         for r in failed_results:
-            out(f" FAIL  {r['file']}")
-            out(f"       {r.get('error', 'Unknown error')}")
+            source = r.get("source_path", r["file"])
+            elapsed = r.get("elapsed_seconds")
+            elapsed_str = f" ({_format_duration(elapsed)})" if elapsed else ""
+            out(f" FAIL  {r['file']}{elapsed_str}")
+            out(f"       Error: {r.get('error', 'Unknown error')}")
+            out(f"       Source: {source}")
 
     # ── Warnings ──────────────────────────────────────────────────────
     warnings_sections = []
@@ -309,6 +314,26 @@ def generate_pipeline_report(
     # Print the report
     print("\n" + "\n".join(lines))
 
+    # Write failed documents to JSON for easy parsing
+    if failed_results:
+        failed_json_path = converted_dir / "_failed_documents.json"
+        import json as _json
+        failed_data = []
+        for r in failed_results:
+            failed_data.append({
+                "file": r["file"],
+                "stem": r.get("stem"),
+                "source_path": r.get("source_path"),
+                "error": r.get("error", "Unknown error"),
+                "elapsed_seconds": r.get("elapsed_seconds"),
+            })
+        try:
+            with open(failed_json_path, "w") as f:
+                _json.dump(failed_data, f, indent=2)
+            print(f"\n Failed document details written to: {failed_json_path}")
+        except Exception:
+            pass  # Non-critical, don't fail the report
+
 
 def run_pipeline(
     input_dir: Path,
@@ -356,12 +381,15 @@ def run_pipeline(
         logger.info("Resuming from previous run")
         logger.info(state.summary())
 
-    pdfs = sorted(input_dir.rglob("*.pdf"))
+    pdfs = sorted(
+        p for ext in ("*.pdf", "*.txt")
+        for p in input_dir.rglob(ext)
+    )
     if not pdfs:
-        logger.error("No PDF files found in %s", input_dir)
+        logger.error("No documents found in %s", input_dir)
         sys.exit(1)
 
-    logger.info("Found %d PDF files in %s", len(pdfs), input_dir)
+    logger.info("Found %d document(s) in %s", len(pdfs), input_dir)
 
     # ── Pre-scan: Classify all documents ─────────────────────────────
     logger.info("[Pre-scan] Classifying documents with PyMuPDF...")
@@ -373,6 +401,21 @@ def run_pipeline(
     )
     # Build doc_type_map: normalized_stem -> DocumentType
     doc_type_map = {stem: cr.doc_type for stem, cr in classifications.items()}
+
+    # Inject classifications for .txt files (can't go through PyMuPDF classifier)
+    for file_path in pdfs:
+        if file_path.suffix.lower() == ".txt":
+            txt_stem = normalize_stem(file_path.stem)
+            if txt_stem not in doc_type_map:
+                doc_type_map[txt_stem] = DocumentType.DEPOSITION
+                classifications[txt_stem] = ClassificationResult(
+                    doc_type=DocumentType.DEPOSITION,
+                    confidence=1.0,
+                    is_text_based=True,
+                    needs_user_input=False,
+                    signals={},
+                )
+
     logger.info("Classifications: %s",
                 {s: dt.value for s, dt in doc_type_map.items()})
 
@@ -380,7 +423,7 @@ def run_pipeline(
     skipped_condensed = []
     filtered_pdfs = []
     for pdf_path in pdfs:
-        if is_condensed_transcript(str(pdf_path)):
+        if pdf_path.suffix.lower() == ".pdf" and is_condensed_transcript(str(pdf_path)):
             logger.info("Skipping condensed transcript: %s", pdf_path.name)
             skipped_condensed.append(pdf_path.name)
         else:
@@ -461,14 +504,20 @@ def run_pipeline(
             stem = pdf_path.stem
             normalized = pdf_to_stem.get(pdf_path, normalize_stem(stem))
 
-            # Get document state
-            doc_state = state.get_document(normalized, pdf_path.name)
+            # Get document state (with source info for error reporting)
+            _file_size = pdf_path.stat().st_size if pdf_path.exists() else None
+            doc_state = state.get_document(
+                normalized, pdf_path.name,
+                source_path=str(pdf_path),
+                file_size_bytes=_file_size,
+            )
 
             # Skip if document completed and not forcing
             if not force and doc_state.status == "completed":
                 logger.info("Skipping %s (already completed)", pdf_path.name)
                 results.append({
                     "file": pdf_path.name,
+                    "source_path": str(pdf_path),
                     "stem": normalized,
                     "status": "SKIPPED",
                     "reason": "Already completed",
@@ -481,6 +530,7 @@ def run_pipeline(
                            pdf_path.name, doc_state.retry_count, doc_state.error)
                 results.append({
                     "file": pdf_path.name,
+                    "source_path": str(pdf_path),
                     "stem": normalized,
                     "status": "SKIPPED",
                     "reason": f"Failed {doc_state.retry_count} times",
@@ -493,8 +543,69 @@ def run_pipeline(
             pbar.set_postfix_str(f"{pdf_path.name[:30]}...")
 
             try:
-                # ── PyMuPDF fast path for text-based depositions ─────────────
                 known_type = doc_type_map.get(normalized)
+
+                # ── Text transcript fast path ────────────────────────────
+                if (pdf_path.suffix.lower() == ".txt"
+                    and known_type in TRANSCRIPT_TYPES
+                    and is_text_transcript(str(pdf_path))
+                    and state.should_process_document(normalized, "conversion", force)):
+
+                    logger.info("[TextExtractor] Plain-text transcript detected")
+                    try:
+                        txt_result = extract_text_deposition(str(pdf_path), str(converted_dir))
+                        logger.info(
+                            "  Extracted %d lines, %d citations",
+                            txt_result["line_count"],
+                            txt_result["citation_count"],
+                        )
+
+                        doc_state.mark_stage_complete("conversion")
+                        doc_state.mark_stage_complete("post_processing")
+                        doc_state.mark_stage_complete("citation_tracking")
+                        doc_state.mark_completed()
+                        state.save()
+
+                        results.append({
+                            "file": pdf_path.name,
+                            "source_path": str(pdf_path),
+                            "stem": normalized,
+                            "status": "OK",
+                            "doc_type": (known_type or DocumentType.DEPOSITION).value,
+                            "md_file": Path(txt_result["md_path"]).name,
+                            "json_file": None,
+                            "citations_count": txt_result["citation_count"],
+                            "coverage_pct": 100.0,
+                            "type_distribution": {"transcript_line": txt_result["citation_count"]},
+                            "extraction_method": "text_extractor",
+                            "elapsed_seconds": round(time.monotonic() - doc_start, 1),
+                            "classification_confidence": cr.confidence if cr else None,
+                            "classification_needs_input": cr.needs_user_input if cr else False,
+                            "had_json": False,
+                            "citation_degraded": False,
+                            "chunks_count": 0,
+                            "bates_gaps": [],
+                            "bates_duplicates": [],
+                            "line_gaps": [],
+                        })
+                        continue
+
+                    except Exception as e:
+                        error_msg = f"Text extraction failed: {str(e)}"
+                        logger.error(error_msg)
+                        doc_state.mark_failed(error_msg)
+                        state.save()
+                        results.append({
+                            "file": pdf_path.name,
+                            "source_path": str(pdf_path),
+                            "stem": normalized,
+                            "status": "FAILED",
+                            "error": error_msg,
+                            "elapsed_seconds": round(time.monotonic() - doc_start, 1),
+                        })
+                        continue
+
+                # ── PyMuPDF fast path for text-based depositions ─────────────
                 cr = classifications.get(normalized)
                 is_text = cr.is_text_based if cr else False
                 if (known_type in TRANSCRIPT_TYPES and
@@ -519,6 +630,7 @@ def run_pipeline(
 
                         results.append({
                             "file": pdf_path.name,
+                            "source_path": str(pdf_path),
                             "stem": normalized,
                             "status": "OK",
                             "doc_type": DocumentType.DEPOSITION.value,
@@ -552,6 +664,7 @@ def run_pipeline(
                 state.save()
                 results.append({
                     "file": pdf_path.name,
+                    "source_path": str(pdf_path),
                     "stem": normalized,
                     "status": "FAILED",
                     "error": error_msg,
@@ -560,6 +673,22 @@ def run_pipeline(
                 continue
 
             # ── Step 1: Conversion ───────────────────────────────────────
+            if pdf_path.suffix.lower() == ".txt":
+                # Text files should have been handled by the text fast path
+                error_msg = f"Text file {pdf_path.name} was not handled by text extractor"
+                logger.error(error_msg)
+                doc_state.mark_failed(error_msg)
+                state.save()
+                results.append({
+                    "file": pdf_path.name,
+                    "source_path": str(pdf_path),
+                    "stem": normalized,
+                    "status": "FAILED",
+                    "error": error_msg,
+                    "elapsed_seconds": round(time.monotonic() - doc_start, 1),
+                })
+                continue
+
             if state.should_process_document(normalized, "conversion", force):
                 logger.info("[Step 1] Converting with Docling...")
 
@@ -606,6 +735,7 @@ def run_pipeline(
                                 state.save()
                                 results.append({
                                     "file": pdf_path.name,
+                                    "source_path": str(pdf_path),
                                     "stem": normalized,
                                     "status": "FAILED",
                                     "error": error_msg,
@@ -636,6 +766,7 @@ def run_pipeline(
                         state.save()
                         results.append({
                             "file": pdf_path.name,
+                            "source_path": str(pdf_path),
                             "stem": normalized,
                             "status": "FAILED",
                             "error": error_msg,
@@ -660,6 +791,7 @@ def run_pipeline(
                     state.save()
                     results.append({
                         "file": pdf_path.name,
+                        "source_path": str(pdf_path),
                         "stem": normalized,
                         "status": "FAILED",
                         "error": error_msg,
@@ -697,6 +829,7 @@ def run_pipeline(
                     state.save()
                     results.append({
                         "file": pdf_path.name,
+                        "source_path": str(pdf_path),
                         "stem": normalized,
                         "status": "FAILED",
                         "error": error_msg,
@@ -775,6 +908,7 @@ def run_pipeline(
             # Collect results
             results.append({
                 "file": pdf_path.name,
+                "source_path": str(pdf_path),
                 "stem": normalized,
                 "status": "OK",
                 "doc_type": doc_type.value,

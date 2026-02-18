@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a litigation document processing pipeline that converts legal documents (PDFs, DOCX) into structured, searchable formats optimized for LLM-assisted legal analysis. The system preserves precise citation information (page numbers, Bates stamps, line numbers, column numbers, paragraph numbers) required for legal work.
+This is a litigation document processing pipeline that converts legal documents (PDFs, DOCX, plain-text transcripts) into structured, searchable formats optimized for LLM-assisted legal analysis. The system preserves precise citation information (page numbers, Bates stamps, line numbers, column numbers, paragraph numbers) required for legal work.
 
-**Current Status:** ✅ **FULLY OPERATIONAL** - Phases 1-5 complete + Production hardening + Performance optimization + User experience. 153 tests (137 passing). Core pipeline functional with high-quality citation tracking (99.2% paragraph, 84.5% column detection), chunking, hybrid search, reranking, and optional LLM enrichment. Benchmark: 98% Precision@5. Performance: 3-4x faster with parallel processing, 30x faster with incremental indexing. Progress bars provide visual feedback during all long-running operations.
+**Current Status:** ✅ **FULLY OPERATIONAL** - Phases 1-5 complete + Production hardening + Performance optimization + User experience. Core pipeline functional with high-quality citation tracking (99.2% paragraph, 84.5% column detection), chunking, hybrid search, reranking, and optional LLM enrichment. Benchmark: 98% Precision@5. Performance: 3-4x faster with parallel processing, 30x faster with incremental indexing. Progress bars provide visual feedback during all long-running operations. Plain-text (.txt) court reporter transcripts are now supported as first-class input alongside PDFs.
 
-**Last Tested:** 2026-02-15 - 266 tests (204 passing, 62 skipped). Successfully processed 454-document Kindler Fuja corpus (16,113 chunks) with dashboard-style end-of-run report.
+**Last Tested:** 2026-02-18 - 292 tests (230 passing, 62 skipped). Successfully processed 454-document Kindler Fuja corpus (16,113 chunks) with dashboard-style end-of-run report.
 
 ## How to Run the Pipeline (Operator Guide)
 
@@ -20,7 +20,7 @@ Before starting, gather these inputs (ask only what's missing — don't re-ask i
 
 | Question | Why it matters | Default |
 |----------|---------------|---------|
-| **Input directory** (where are the PDFs?) | Required — no default | — |
+| **Input directory** (where are the PDFs/TXTs?) | Required — no default | — |
 | **Output directory** | Where processed output goes. For new projects use `~/Dev/processed-lit-docs/<project_name>/`. For existing projects, use the project's existing output folder. | `~/Dev/processed-lit-docs/<project_name>/` |
 | **Case type** (`patent`, `contract`, `employment`, etc.) | Affects enrichment context and citation format expectations | `patent` |
 | **Party names** (comma-separated) | Used by enrichment to identify relevant entities | `""` |
@@ -124,9 +124,9 @@ The pipeline now prints a **dashboard-style report** automatically. After the ru
 
 The pipeline consists of 5 main steps:
 
-1. **Conversion (Docling)** - Extract to JSON + MD with proper flags
+1. **Conversion (Docling / TextExtractor / PyMuPDF)** - Extract to JSON + MD with proper flags (PDFs via Docling or PyMuPDF fast path; plain-text transcripts via TextExtractor)
 2. **Post-Processing** - Clean OCR artifacts while preserving citation markers
-3. **Citation Reconstruction** - Parse line/column/paragraph numbers from JSON provenance
+3. **Citation Reconstruction** - Parse line/column/paragraph numbers from JSON provenance or text structure
 4. **Chunking** - Create semantic chunks inheriting citation metadata (saves to *_chunks.json)
 5. **Vector Indexing** - Hybrid BM25 + Chroma with metadata (separate command)
 6. **LLM Enrichment (Optional)** - Summaries, key quotes, categorization (optional flag)
@@ -141,7 +141,8 @@ The pipeline consists of 5 main steps:
 
 **Phase 1: Citation Foundation**
 - `citation_tracker.py` - Bbox-based line/column/paragraph inference
-- `pymupdf_extractor.py` - Fast path for text-based depositions
+- `pymupdf_extractor.py` - Fast path for text-based PDF depositions
+- `text_extractor.py` - Fast path for plain-text (.txt) court reporter transcripts
 - `format_handlers.py` - Document type detection
 - Citation coverage: 100% for text depositions, 99.8% Bates coverage
 
@@ -229,7 +230,7 @@ The pipeline consists of 5 main steps:
 ```
 
 **What this does:**
-- Converts PDFs via Docling (JSON + Markdown)
+- Converts PDFs via Docling (JSON + Markdown); plain-text transcripts via TextExtractor fast path
 - Extracts citations (line numbers, columns, paragraphs, Bates)
 - Post-processes text (cleans OCR, inlines footnotes)
 - **Creates semantic chunks** (saves to *_chunks.json files)
@@ -367,6 +368,8 @@ To surgically remove a processed document from all output files and search index
 
 ### Depositions
 - Detect: Q&A format, line numbers 1-25 per page
+- Accepts both PDF and plain-text (.txt) court reporter transcripts
+- Plain-text transcripts use `text_extractor.py` fast path (no Docling needed)
 - Citations: page:line format (e.g., "45:12-18")
 - Chunking: Never split Q&A pairs, preserve line ranges
 
@@ -423,7 +426,8 @@ lit-doc-pipeline/
 ├── docling_converter.py       # PDF/DOCX conversion via Docling
 ├── citation_tracker.py        # Citation reconstruction from Docling JSON
 ├── citation_types.py          # Data structures (Chunk, SearchResult, etc.)
-├── pymupdf_extractor.py       # Fast path for text-based depositions
+├── pymupdf_extractor.py       # Fast path for text-based PDF depositions
+├── text_extractor.py          # Fast path for plain-text (.txt) transcripts
 ├── doc_classifier.py          # Generic document type classifier (self-learning)
 ├── format_handlers.py         # Document type detection
 ├── post_processor.py          # Text cleaning + footnote insertion
@@ -444,7 +448,8 @@ lit-doc-pipeline/
 │   ├── test_citation_tracker.py
 │   ├── test_chunk_documents.py
 │   ├── test_hybrid_retriever.py
-│   └── ... (153 tests total)
+│   ├── test_text_extractor.py
+│   └── ... (292 tests total)
 └── _Archive/
     └── LITIGATION_DOCUMENT_PIPELINE_TRD.md  # Complete spec
 
@@ -493,7 +498,7 @@ lit-doc-pipeline/
 
 ## Litigation Skills Suite
 
-Seven skills in `~/.claude/skills/` consume pipeline output to produce litigation work product with traceable citations. Each skill runs Phase 0 (pipeline discovery) to locate chunk files and search indexes, then uses the search CLI for evidence retrieval.
+Nine skills in `~/.claude/skills/` consume pipeline output to produce litigation work product with traceable citations. Each skill runs Phase 0 (pipeline discovery) to locate chunk files and search indexes, then uses the search CLI for evidence retrieval.
 
 | Slash Command | Skill File | Purpose |
 |---------------|-----------|---------|
@@ -503,7 +508,9 @@ Seven skills in `~/.claude/skills/` consume pipeline output to produce litigatio
 | `/draft-pleading` | `draft-pleading.md` | Complaints, answers, counterclaims, ITC complaints |
 | `/discovery-draft` | `discovery-draft.md` | Interrogatories, RFPs, RFAs (offensive/defensive) |
 | `/discovery-respond` | `discovery-respond.md` | Discovery responses and objections (offensive/defensive) |
+| `/review-production` | `doc-review.md` | Production document review charts and memoranda |
 | `/build-context` | `reusable-context-creator.md` | Portable context file (≤150k tokens) from knowledge base |
+| `/build-manifest` | `case-manifest.md` | Comprehensive case manifest from founding documents |
 
 Skills default to patent litigation conventions unless `case_context.json` or user input indicates otherwise. All factual citations use the chunk's `citation_string` verbatim.
 

@@ -544,6 +544,8 @@ def run_pipeline(
 
             try:
                 known_type = doc_type_map.get(normalized)
+                cr = classifications.get(normalized)
+                is_text = cr.is_text_based if cr else False
 
                 # ── Text transcript fast path ────────────────────────────
                 if (pdf_path.suffix.lower() == ".txt"
@@ -606,8 +608,6 @@ def run_pipeline(
                         continue
 
                 # ── PyMuPDF fast path for text-based depositions ─────────────
-                cr = classifications.get(normalized)
-                is_text = cr.is_text_based if cr else False
                 if (known_type in TRANSCRIPT_TYPES and
                     is_text and is_text_based_pdf(str(pdf_path)) and
                     state.should_process_document(normalized, "conversion", force)):

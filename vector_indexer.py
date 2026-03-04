@@ -10,7 +10,7 @@ NOTE: ChromaDB import is delayed to runtime to avoid Python 3.14 compatibility i
 import logging
 import requests
 from pathlib import Path
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Set
 
 from citation_types import Chunk
 
@@ -152,6 +152,107 @@ class VectorIndexer:
         logger.warning("Text too long for embedding even at %d chars", self._TRUNCATION_LIMITS[-1])
         return None
 
+    def _should_use_incremental(self) -> bool:
+        """
+        Determine if incremental indexing is possible.
+
+        Returns True if collection exists and has data.
+        """
+        if self.client is None:
+            return False
+
+        try:
+            collection = self.client.get_collection(name=self.collection_name)
+            return collection.count() > 0
+        except Exception:
+            return False
+
+    def _get_existing_chunk_ids(self) -> set:
+        """
+        Get set of chunk IDs currently in the collection.
+
+        Returns:
+            Set of chunk_id strings, or empty set if unavailable
+        """
+        try:
+            if self.collection is None:
+                self.collection = self.client.get_collection(name=self.collection_name)
+
+            result = self.collection.get()
+            return set(result['ids'])
+        except Exception as e:
+            logger.warning(f"Could not retrieve existing chunk IDs: {e}")
+            return set()
+
+    def _update_index_incremental(
+        self,
+        chunks: List[Chunk],
+        existing_chunk_ids: set,
+        changed_document_stems: Optional[Set[str]] = None
+    ) -> None:
+        """
+        Update index incrementally by adding/removing chunks.
+
+        Handles:
+        - New chunks (not in collection)
+        - Deleted chunks (in collection but not in chunks)
+        - Modified documents (re-embed their chunks)
+
+        Args:
+            chunks: Current complete chunk list
+            existing_chunk_ids: Set of chunk IDs in collection
+            changed_document_stems: Document stems that changed (for re-embedding)
+        """
+        current_chunk_ids = {chunk.chunk_id for chunk in chunks}
+
+        # Identify chunks from modified documents that need re-embedding
+        update_ids = set()
+        if changed_document_stems:
+            for chunk in chunks:
+                # chunk_id format: "{docname}_chunk_{index}"
+                # Check if chunk belongs to a changed document
+                for stem in changed_document_stems:
+                    if chunk.chunk_id.startswith(f"{stem}_chunk_"):
+                        update_ids.add(chunk.chunk_id)
+                        break
+
+            logger.info(f"Re-embedding {len(update_ids)} chunks from {len(changed_document_stems)} modified documents")
+
+        # Compute operations:
+        # - Delete: in collection but not in current chunks, OR from modified docs
+        # - Add: not in collection, OR from modified docs
+        to_delete = (existing_chunk_ids - current_chunk_ids) | update_ids
+        to_add = [c for c in chunks if c.chunk_id not in existing_chunk_ids or c.chunk_id in update_ids]
+
+        # Log plan
+        logger.info(f"Incremental update plan:")
+        logger.info(f"  Existing chunks: {len(existing_chunk_ids)}")
+        logger.info(f"  Current chunks: {len(current_chunk_ids)}")
+        logger.info(f"  To delete: {len(to_delete)}")
+        logger.info(f"  To add: {len(to_add)}")
+        logger.info(f"  Net change: {len(to_add) - len(to_delete):+d}")
+
+        # Execute deletions in batches (ChromaDB batch limit: 5000)
+        if to_delete:
+            batch_size = 5000
+            to_delete_list = list(to_delete)
+            for i in range(0, len(to_delete_list), batch_size):
+                batch = to_delete_list[i:i + batch_size]
+                self.collection.delete(ids=batch)
+                logger.info(f"  Deleted {min(i + batch_size, len(to_delete_list))}/{len(to_delete_list)} chunks")
+
+        # Execute additions (embed + add)
+        if to_add:
+            batch_size = 10  # Match full build batch size
+            for i in range(0, len(to_add), batch_size):
+                batch = to_add[i:i + batch_size]
+                self._add_batch(batch)
+
+                if (i + batch_size) % 50 == 0:
+                    logger.info(f"  Added {min(i + batch_size, len(to_add))}/{len(to_add)} chunks")
+
+        logger.info(f"Incremental update complete: {self.collection.count()} chunks in index")
+
     def _init_client(self) -> None:
         """Initialize Chroma client."""
         if not self._load_chromadb():
@@ -162,12 +263,25 @@ class VectorIndexer:
                 path=str(self.persist_directory)
             )
 
-    def build_index(self, chunks: List[Chunk]) -> None:
+    def build_index(
+        self,
+        chunks: List[Chunk],
+        incremental: Optional[bool] = None,
+        changed_stems: Optional[Set[str]] = None
+    ) -> None:
         """
-        Build vector index from chunks.
+        Build or update vector index from chunks.
 
         Args:
             chunks: List of Chunk objects to index
+            incremental: Update strategy:
+                - None (default): Auto-detect (incremental if collection exists)
+                - True: Force incremental update
+                - False: Force full rebuild
+            changed_stems: Set of document stems with modified content
+
+        Raises:
+            ValueError: If chunks list is empty
         """
         if not self._ollama_available:
             logger.warning("Ollama not available, skipping vector index build")
@@ -176,10 +290,35 @@ class VectorIndexer:
         if not chunks:
             raise ValueError("Cannot build index from empty chunk list")
 
-        logger.info(f"Building vector index for {len(chunks)} chunks...")
-
         # Initialize Chroma client
         self._init_client()
+
+        # Determine strategy
+        if incremental is None:
+            incremental = self._should_use_incremental()
+            logger.info(f"Auto-detected strategy: {'incremental' if incremental else 'full rebuild'}")
+
+        if incremental:
+            # Incremental update path
+            logger.info(f"Updating vector index incrementally for {len(chunks)} chunks...")
+
+            try:
+                # Load or create collection
+                self.collection = self.client.get_collection(name=self.collection_name)
+                existing_ids = self._get_existing_chunk_ids()
+
+                # Perform incremental update
+                self._update_index_incremental(chunks, existing_ids, changed_stems)
+                logger.info("Vector index updated successfully")
+                return
+
+            except Exception as e:
+                logger.warning(f"Incremental update failed: {e}")
+                logger.info("Falling back to full rebuild...")
+                incremental = False
+
+        # Full rebuild path (original logic)
+        logger.info(f"Building vector index from scratch for {len(chunks)} chunks...")
 
         # Delete existing collection if it exists
         try:

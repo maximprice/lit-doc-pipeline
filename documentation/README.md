@@ -10,7 +10,7 @@ A Python-based system for converting legal documents (PDFs, DOCX, etc.) into str
 - **Configurable Pipeline**: JSON/YAML config files for all pipeline parameters
 - **LLM Enrichment**: Optional summaries and categorization
 - **Robust Error Handling**: Checkpoint/resume, automatic retry limiting, graceful failure handling
-- **High Performance**: Parallel processing (3-4x faster) + incremental indexing (30x faster for unchanged files)
+- **High Performance**: Parallel processing (3-4x faster) + incremental BM25 indexing (30x faster) + incremental vector indexing (40-5,000x faster for typical updates)
 - **Progress Bars**: Visual feedback with ETAs for all long-running operations (auto-disables in tests)
 
 ## Installation

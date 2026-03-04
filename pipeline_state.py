@@ -25,6 +25,9 @@ class DocumentState:
     last_updated: str
     error: Optional[str] = None
     retry_count: int = 0
+    source_path: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+    page_count: Optional[int] = None
 
     def is_stage_complete(self, stage: str) -> bool:
         """Check if a specific stage is complete."""
@@ -142,13 +145,18 @@ class PipelineState:
         except Exception as e:
             logger.error("Failed to save state file: %s", e)
 
-    def get_document(self, stem: str, filename: str) -> DocumentState:
+    def get_document(self, stem: str, filename: str,
+                     source_path: str = None, file_size_bytes: int = None,
+                     page_count: int = None) -> DocumentState:
         """
         Get or create document state.
 
         Args:
             stem: Normalized document stem
             filename: Original filename
+            source_path: Full path to source PDF
+            file_size_bytes: File size in bytes
+            page_count: Number of pages in PDF
 
         Returns:
             DocumentState for this document
@@ -160,7 +168,19 @@ class PipelineState:
                 stages_completed=[],
                 status="in_progress",
                 last_updated=datetime.now().isoformat(),
+                source_path=source_path,
+                file_size_bytes=file_size_bytes,
+                page_count=page_count,
             )
+        else:
+            # Update source info if not already set
+            doc = self.documents[stem]
+            if source_path and not doc.source_path:
+                doc.source_path = source_path
+            if file_size_bytes and not doc.file_size_bytes:
+                doc.file_size_bytes = file_size_bytes
+            if page_count is not None and doc.page_count is None:
+                doc.page_count = page_count
         return self.documents[stem]
 
     def get_incomplete_documents(self) -> List[DocumentState]:
@@ -231,7 +251,10 @@ class PipelineState:
         if failed > 0:
             lines.append("\nFailed documents:")
             for doc in self.get_failed_documents():
+                size_str = f", {doc.file_size_bytes / 1024 / 1024:.0f}MB" if doc.file_size_bytes else ""
+                pages_str = f", {doc.page_count} pages" if doc.page_count else ""
+                path_str = f"\n    Source: {doc.source_path}" if doc.source_path else ""
                 lines.append(f"  - {doc.filename}: {doc.error or 'Unknown error'} "
-                           f"(retries: {doc.retry_count})")
+                           f"(retries: {doc.retry_count}{size_str}{pages_str}){path_str}")
 
         return "\n".join(lines)

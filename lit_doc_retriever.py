@@ -137,7 +137,17 @@ def build_indexes(output_dir: str, config_path: Optional[str] = None, force: boo
         logger.info("Use --force-rebuild to force reindexing")
         return
 
-    # Load ALL chunks (required because indexers don't support partial updates)
+    # Extract document stems from changed files for vector re-embedding
+    changed_stems = set()
+    for chunk_file in files_to_reindex:
+        # chunk_file.stem is like "daniel_alexander_10_24_2025_chunks"
+        # Remove "_chunks" suffix to get document stem
+        stem = chunk_file.stem.replace("_chunks", "")
+        changed_stems.add(stem)
+
+    logger.info(f"Changed documents: {len(changed_stems)} ({len(files_to_reindex)} chunk files)")
+
+    # Load ALL chunks (BM25 requires full corpus for TF-IDF; vector indexer will use incrementally)
     logger.info("Loading chunks from cache...")
     chunks = []
     chunk_files = sorted(converted_dir.glob("*_chunks.json"))
@@ -205,7 +215,17 @@ def build_indexes(output_dir: str, config_path: Optional[str] = None, force: boo
 
     if vector_indexer.is_available():
         start_time = time.time()
-        vector_indexer.build_index(chunks)
+
+        # Auto-detect incremental unless forced
+        incremental_override = False if force else None
+
+        # Build/update index
+        vector_indexer.build_index(
+            chunks,
+            incremental=incremental_override,
+            changed_stems=changed_stems if changed_stems else None
+        )
+
         vector_time = time.time() - start_time
         logger.info(f"Vector index built in {vector_time:.2f}s")
     else:

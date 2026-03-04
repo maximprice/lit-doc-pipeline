@@ -29,6 +29,7 @@ from chunk_documents import chunk_all_documents
 from doc_classifier import classify_directory, ProfileStore, ClassificationResult, is_condensed_transcript
 from docling_converter import DoclingConverter
 from parallel_processor import process_documents_parallel, get_optimal_worker_count
+from pdf_metadata import extract_pdf_metadata, get_page_count
 from pipeline_state import PipelineState
 from post_processor import PostProcessor
 from pymupdf_extractor import is_text_based_pdf, extract_deposition
@@ -506,10 +507,47 @@ def run_pipeline(
 
             # Get document state (with source info for error reporting)
             _file_size = pdf_path.stat().st_size if pdf_path.exists() else None
+
+            # Compute content hash for deduplication (skip for .txt files)
+            _content_hash = None
+            _metadata = {}
+            if pdf_path.suffix.lower() == ".pdf":
+                try:
+                    _content_hash = state.compute_content_hash(pdf_path)
+
+                    # Check for duplicate
+                    duplicate = state.find_duplicate(_content_hash)
+                    if duplicate and not force:
+                        dup_stem, dup_doc = duplicate
+                        logger.warning("⚠️  Duplicate detected: %s is identical to %s",
+                                     pdf_path.name, dup_doc.filename)
+                        logger.warning("   Skipping duplicate (use --force to process anyway)")
+                        results.append({
+                            "file": pdf_path.name,
+                            "source_path": str(pdf_path),
+                            "stem": normalized,
+                            "status": "SKIPPED",
+                            "reason": f"Duplicate of {dup_doc.filename}",
+                            "duplicate_of": dup_stem,
+                        })
+                        continue
+
+                    # Extract PDF metadata
+                    _metadata = extract_pdf_metadata(pdf_path)
+                    _page_count = get_page_count(pdf_path)
+
+                except Exception as e:
+                    logger.warning("Failed to compute hash/metadata for %s: %s", pdf_path.name, e)
+
             doc_state = state.get_document(
                 normalized, pdf_path.name,
                 source_path=str(pdf_path),
                 file_size_bytes=_file_size,
+                content_hash=_content_hash,
+                page_count=_page_count if '_page_count' in locals() else None,
+                author=_metadata.get("author"),
+                creation_date=_metadata.get("creation_date"),
+                modified_date=_metadata.get("modified_date"),
             )
 
             # Skip if document completed and not forcing

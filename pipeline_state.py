@@ -5,12 +5,13 @@ Tracks which documents have been processed through each pipeline stage,
 enabling recovery from failures and incremental processing.
 """
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,10 @@ class DocumentState:
     source_path: Optional[str] = None
     file_size_bytes: Optional[int] = None
     page_count: Optional[int] = None
+    content_hash: Optional[str] = None  # SHA256 hash for deduplication
+    author: Optional[str] = None  # PDF metadata
+    creation_date: Optional[str] = None  # PDF metadata
+    modified_date: Optional[str] = None  # PDF metadata
 
     def is_stage_complete(self, stage: str) -> bool:
         """Check if a specific stage is complete."""
@@ -147,7 +152,9 @@ class PipelineState:
 
     def get_document(self, stem: str, filename: str,
                      source_path: str = None, file_size_bytes: int = None,
-                     page_count: int = None) -> DocumentState:
+                     page_count: int = None, content_hash: str = None,
+                     author: str = None, creation_date: str = None,
+                     modified_date: str = None) -> DocumentState:
         """
         Get or create document state.
 
@@ -157,6 +164,10 @@ class PipelineState:
             source_path: Full path to source PDF
             file_size_bytes: File size in bytes
             page_count: Number of pages in PDF
+            content_hash: SHA256 hash of file content
+            author: PDF author metadata
+            creation_date: PDF creation date metadata
+            modified_date: PDF modified date metadata
 
         Returns:
             DocumentState for this document
@@ -171,6 +182,10 @@ class PipelineState:
                 source_path=source_path,
                 file_size_bytes=file_size_bytes,
                 page_count=page_count,
+                content_hash=content_hash,
+                author=author,
+                creation_date=creation_date,
+                modified_date=modified_date,
             )
         else:
             # Update source info if not already set
@@ -181,6 +196,14 @@ class PipelineState:
                 doc.file_size_bytes = file_size_bytes
             if page_count is not None and doc.page_count is None:
                 doc.page_count = page_count
+            if content_hash and not doc.content_hash:
+                doc.content_hash = content_hash
+            if author and not doc.author:
+                doc.author = author
+            if creation_date and not doc.creation_date:
+                doc.creation_date = creation_date
+            if modified_date and not doc.modified_date:
+                doc.modified_date = modified_date
         return self.documents[stem]
 
     def get_incomplete_documents(self) -> List[DocumentState]:
@@ -196,6 +219,39 @@ class PipelineState:
             doc for doc in self.documents.values()
             if doc.status == "failed"
         ]
+
+    @staticmethod
+    def compute_content_hash(file_path: Path) -> str:
+        """
+        Compute SHA256 hash of file content for deduplication.
+
+        Args:
+            file_path: Path to file
+
+        Returns:
+            Hex-encoded SHA256 hash
+        """
+        sha256 = hashlib.sha256()
+        with open(file_path, 'rb') as f:
+            # Read in 64KB chunks for memory efficiency
+            for chunk in iter(lambda: f.read(65536), b''):
+                sha256.update(chunk)
+        return sha256.hexdigest()
+
+    def find_duplicate(self, content_hash: str) -> Optional[Tuple[str, DocumentState]]:
+        """
+        Find duplicate document by content hash.
+
+        Args:
+            content_hash: SHA256 hash to search for
+
+        Returns:
+            Tuple of (stem, DocumentState) if duplicate found, None otherwise
+        """
+        for stem, doc in self.documents.items():
+            if doc.content_hash == content_hash:
+                return (stem, doc)
+        return None
 
     def should_process_document(self, stem: str, stage: str, force: bool = False) -> bool:
         """

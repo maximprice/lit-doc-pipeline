@@ -252,12 +252,12 @@ class DocumentChunker:
                         if page not in current_metadata.pages:
                             current_metadata.pages.append(page)
 
-                        # Track line range for this page
-                        if current_page not in current_metadata.line_ranges:
-                            current_metadata.line_ranges[current_page] = (line_num, line_num)
+                        # Track line range for this page (use 'page' not 'current_page' - Bug Fix #1)
+                        if page not in current_metadata.line_ranges:
+                            current_metadata.line_ranges[page] = (line_num, line_num)
                         else:
-                            start, end = current_metadata.line_ranges[current_page]
-                            current_metadata.line_ranges[current_page] = (min(start, line_num), max(end, line_num))
+                            start, end = current_metadata.line_ranges[page]
+                            current_metadata.line_ranges[page] = (min(start, line_num), max(end, line_num))
 
                         bates = cit.get("bates")
                         line_bates = bates
@@ -286,19 +286,31 @@ class DocumentChunker:
                         )
                         chunks.append(chunk)
 
-                        # Start new chunk with overlap (last few lines)
+                        # Start new chunk with overlap (last few lines) - Bug Fix #3
                         overlap_count = min(3, len(current_chunk_lines))
                         overlap_lines = current_chunk_lines[-overlap_count:] if overlap_count else []
                         overlap_attrs = current_line_attrs[-overlap_count:] if overlap_count else []
                         current_chunk_lines = overlap_lines
                         current_line_attrs = overlap_attrs
+
+                        # Preserve FULL metadata for overlap lines, not just last page
                         current_metadata = ChunkMetadata()
-                        # Preserve page/Bates from overlap
-                        if chunk.pages:
-                            current_metadata.pages = [chunk.pages[-1]]
-                            current_metadata.transcript_pages = [chunk.citation.get("transcript_pages", [])[-1]] if chunk.citation.get("transcript_pages") else []
-                        if chunk.citation.get("bates_range"):
-                            current_metadata.bates_stamps = [chunk.citation["bates_range"][-1]]
+                        overlap_pages = sorted(set(attr[0] for attr in overlap_attrs if attr[0]))
+                        overlap_bates = [attr[1] for attr in overlap_attrs if attr[1]]
+
+                        if overlap_pages:
+                            current_metadata.pages = overlap_pages
+                            current_metadata.transcript_pages = overlap_pages  # Assume transcript pages match for depositions
+                        if overlap_bates:
+                            current_metadata.bates_stamps = overlap_bates
+
+                        # Preserve line_ranges for overlap lines from previous chunk
+                        if hasattr(chunk, 'citation') and chunk.citation.get('transcript_lines'):
+                            # Copy line ranges that appear in overlap
+                            for page_str, line_range in chunk.citation['transcript_lines'].items():
+                                page_num = int(page_str)
+                                if page_num in overlap_pages:
+                                    current_metadata.line_ranges[page_num] = tuple(line_range)
 
                 else:
                     current_chunk_lines.append(line)
@@ -380,14 +392,19 @@ class DocumentChunker:
                     current_chunk_entries.append((line_text, text_id))
                     continue
 
-                # Detect paragraph start (numbered paragraphs)
-                para_match = re.match(r"^(\d+)\.\s+", line_text)
+                # Detect paragraph start (enhanced patterns - Bug Fix #4)
+                para_match = (
+                    re.match(r"^¶\s*(\d+)", line_text) or           # ¶ 42
+                    re.match(r"^§\s*(\d+)", line_text) or           # § 42
+                    re.match(r"^Paragraph\s+(\d+)", line_text) or   # Paragraph 42
+                    re.match(r"^(\d+)\.\s+[A-Z]", line_text)        # 42. I declare...
+                )
 
                 # Check if we should start a new chunk
                 chunk_text = "\n".join(t for t, _ in current_chunk_entries)
                 tokens = len(chunk_text) // CHARS_PER_TOKEN
 
-                # Split at paragraph boundaries when target size reached
+                # Split at paragraph boundaries when target size reached (Bug Fix #4)
                 if para_match and tokens >= self.target_tokens and current_chunk_entries:
                     page_map, bates_map = self._build_line_maps(current_chunk_entries, citations)
                     chunk = self._create_chunk(
@@ -399,6 +416,19 @@ class DocumentChunker:
                     chunks.append(chunk)
 
                     # Start new chunk (no overlap for expert reports - paragraphs are self-contained)
+                    current_chunk_entries = []
+                    current_metadata = ChunkMetadata()
+                elif tokens >= self.max_tokens and current_chunk_entries:
+                    # HARD limit - must split even if not at paragraph boundary
+                    logger.warning(f"Chunk exceeds max_tokens ({self.max_tokens}), forcing split mid-paragraph")
+                    page_map, bates_map = self._build_line_maps(current_chunk_entries, citations)
+                    chunk = self._create_chunk(
+                        chunk_text, current_metadata, stem, source_file,
+                        len(chunks), DocumentType.EXPERT_REPORT,
+                        page_map=page_map, bates_map=bates_map,
+                        source_path=source_path,
+                    )
+                    chunks.append(chunk)
                     current_chunk_entries = []
                     current_metadata = ChunkMetadata()
 
@@ -696,18 +726,23 @@ class DocumentChunker:
             return f"{doc_name}"
 
         else:
-            # Generic: "Document Name, p. 14 [BATES_001]"
-            bates_suffix = ""
+            # Generic: Prefer Bates numbers over page numbers (legal convention - Bug Fix #2)
             if metadata.bates_stamps:
-                bates_suffix = f" [{metadata.bates_stamps[0]}]"
+                # Use Bates number format: "Document at BATES_001" or "Document at BATES_001-BATES_003"
+                bates_list = metadata.bates_stamps
+                if len(bates_list) == 1:
+                    return f"{doc_name} at {bates_list[0]}"
+                else:
+                    return f"{doc_name} at {bates_list[0]}-{bates_list[-1]}"
+
+            # Fallback to page numbers if no Bates stamps
             if metadata.pages:
                 pages = sorted(set(metadata.pages))
                 if len(pages) == 1:
-                    return f"{doc_name}, p. {pages[0]}{bates_suffix}"
+                    return f"{doc_name}, p. {pages[0]}"
                 else:
-                    return f"{doc_name}, pp. {pages[0]}-{pages[-1]}{bates_suffix}"
-            if bates_suffix:
-                return f"{doc_name}{bates_suffix}"
+                    return f"{doc_name}, pp. {pages[0]}-{pages[-1]}"
+
             return f"{doc_name}"
 
 

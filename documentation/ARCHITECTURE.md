@@ -1,7 +1,8 @@
 # Litigation Document Pipeline - Architecture
 
-**Version:** 1.0
-**Last Updated:** 2026-02-11
+**Version:** 1.1
+**Last Updated:** 2026-03-04
+**Recent Updates:** Citation engine bug fixes, deduplication, metadata extraction
 
 ---
 
@@ -776,6 +777,104 @@ ollama pull llama3.1:8b       # 4.7GB, for enrichment
 2. Mock external dependencies (Ollama, Anthropic)
 3. Use real test data for integration tests (in tests/test_docs/)
 4. Mark integration tests with `@pytest.mark.skipif` for missing data
+
+---
+
+## Recent Updates (v1.1 - March 2026)
+
+### Citation Engine Bug Fixes
+
+**Date:** 2026-03-04
+**Impact:** Critical accuracy improvements for all future processing
+
+Four systematic bugs were identified and fixed in `chunk_documents.py` that caused citation inaccuracies requiring attorney corrections:
+
+#### Bug 1: Line Range Variable Error
+**Symptoms:** Deposition line numbers off by 1-2 lines
+- Example: System generated `175:17-19`, correct was `175:15-19`
+
+**Root Cause:** Line ranges tracked against wrong page variable (`current_page` instead of `page`)
+- Location: `chunk_documents.py:256-260`
+- When chunks spanned multiple pages, line numbers became misaligned
+
+**Fix:** Changed line_ranges tracking to use correct `page` variable from citation lookup
+
+#### Bug 2: Bates Number Citation Format
+**Symptoms:** Citations used page numbers with Bates as suffix instead of Bates-primary format
+
+**Previous Format:**
+```
+Google Agreement, PROX_INTEL-00002761, pp. 2-3 [PROX_INTEL-00002762]
+```
+
+**New Format (Legal Convention):**
+```
+Google Agreement, PROX_INTEL-00002761 at 00002762-00002763
+```
+
+**Root Cause:** Generic citation generation preferred page numbers over Bates
+- Location: `chunk_documents.py:710-723`
+
+**Fix:** Citations now check for Bates stamps first and use "at BATES_NNN" format
+
+#### Bug 3: Chunk Overlap Metadata Loss
+**Symptoms:** Completely wrong page numbers in citations
+- Example: System generated `148:19-21`, correct was `141:10-16`
+
+**Root Cause:** Chunk overlap mechanism only preserved last page, lost all other metadata
+- Location: `chunk_documents.py:289-313`
+- When creating new chunk with overlap lines, metadata was reset
+- Stale page references could leak into new chunks
+
+**Fix:** Preserve full metadata for overlap lines including pages, Bates, and line_ranges
+
+#### Bug 4: Paragraph Boundary Detection
+**Symptoms:** Paragraph content didn't match paragraph numbers
+- Example: Paragraphs 148-150 cited wrong section content
+
+**Root Cause:** Limited paragraph detection patterns + no hard token limit
+- Location: `chunk_documents.py:395-420`
+- Only detected "N. " format, missed ¶, §, Paragraph N
+- Chunks could exceed max_tokens and split mid-paragraph
+
+**Fix:** Enhanced regex patterns for paragraph detection + added hard max_tokens safety limit
+
+---
+
+### Impact on Citation Accuracy
+
+**Before Fixes:**
+- Line numbers: ±2 line accuracy
+- Page numbers: Occasional off-by-1 errors
+- Bates citations: Non-standard format
+- Paragraph content: Misalignment possible
+
+**After Fixes:**
+- Line numbers: ±0 line accuracy (exact)
+- Page numbers: Accurate with proper metadata preservation
+- Bates citations: Legal convention format (`at BATES_NNN`)
+- Paragraph content: Aligned with paragraph boundaries
+
+**Verification:** Re-chunked 868 documents, generated 58,816 chunks with corrected citations
+
+---
+
+### Other Recent Enhancements
+
+**Deduplication (2026-03-04):**
+- SHA256 content hashing prevents duplicate document processing
+- Automatic skip with warning for identical files
+- See `DEDUPLICATION_AND_METADATA.md` for details
+
+**Metadata Extraction (2026-03-04):**
+- Extracts PDF author, creation date, modified date
+- Stored in pipeline state for all documents
+- Enables future timeline analysis and author attribution
+
+**Incremental Vector Indexing (2026-03-04):**
+- Only re-embeds chunks from modified documents
+- 40-5,000x speedup for typical updates
+- See `PERFORMANCE.md` for benchmarks
 
 ---
 

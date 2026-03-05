@@ -234,18 +234,45 @@ class DocumentChunker:
                             current_metadata.transcript_pages.append(page)
                     continue
 
-                # Parse line number and Q/A marker
+                # Parse line number and Q/A marker (handle both standard and table formats)
+                # Standard format: " 5    Q  Question text"
+                # Table format: "|  | Q. Question text  | timestamp |" or "Q.  Question text"
                 match = re.match(r"^\s*(\d{1,2})\s+([QA])\s+(.+)$", line)
+                if not match:
+                    # Try table format: "| Q. Text |" or just "Q.  Text"
+                    table_match = re.search(r'\|\s*([QA])\.?\s+(.+?)\s*\|', line)
+                    if table_match:
+                        # No explicit line number in table - use text_id to look up citation
+                        qa_marker = table_match.group(1)
+                        text = table_match.group(2)
+                        # Get line number from citation if available
+                        if _text_id is not None:
+                            text_id_key = f"#/texts/{_text_id}"
+                            cit = citations.get(text_id_key)
+                            if cit and cit.get("line_start"):
+                                match = type('obj', (object,), {
+                                    'group': lambda self, n: [None, str(cit.get("line_start")), qa_marker, text][n]
+                                })()
+
                 if match:
                     line_num = int(match.group(1))
                     qa_marker = match.group(2)
                     text = match.group(3)
 
-                    # Look up citation for this line (PyMuPDF key first, then Docling fallback)
+                    # Look up citation for this line (text_id first if available, then PyMuPDF, then Docling fallback)
                     current_page = current_metadata.transcript_pages[-1] if current_metadata.transcript_pages else 1
                     line_page = current_page
                     line_bates = None
-                    cit = self._find_deposition_citation(citations, current_page, line_num)
+
+                    # Try text_id first (Docling format)
+                    cit = None
+                    if _text_id is not None:
+                        text_id_key = f"#/texts/{_text_id}"
+                        cit = citations.get(text_id_key)
+
+                    # Fallback to page/line lookup if text_id didn't work
+                    if not cit:
+                        cit = self._find_deposition_citation(citations, current_page, line_num)
                     if cit:
                         page = cit.get("page", current_page)
                         line_page = page

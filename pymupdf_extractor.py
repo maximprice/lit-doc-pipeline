@@ -90,8 +90,11 @@ def extract_deposition(pdf_path: str, output_dir: str) -> dict:
 
             transcript_page = page_data["transcript_page"]
 
-            if transcript_page is not None:
-                md_lines.append(f"\n[PAGE:{transcript_page}]")
+            # Use PDF page as fallback if no transcript page markers detected
+            effective_transcript_page = transcript_page if transcript_page is not None else (page_idx + 1)
+
+            # Always insert PAGE marker using effective page number
+            md_lines.append(f"\n[PAGE:{effective_transcript_page}]")
 
             for line_info in page_data["lines"]:
                 line_num = line_info["line_num"]
@@ -101,15 +104,15 @@ def extract_deposition(pdf_path: str, output_dir: str) -> dict:
                     continue
 
                 # Build citation key
-                if transcript_page is not None and line_num is not None:
-                    key = f"line_P{transcript_page}_L{line_num}"
+                if effective_transcript_page is not None and line_num is not None:
+                    key = f"line_P{effective_transcript_page}_L{line_num}"
                     citations[key] = CitationData(
                         page=page_idx + 1,
                         line_start=line_num,
                         line_end=line_num,
                         type="transcript_line",
                     ).to_dict()
-                    citations[key]["transcript_page"] = transcript_page
+                    citations[key]["transcript_page"] = effective_transcript_page
 
                 # Format markdown with line numbers for depositions
                 if line_num is not None:

@@ -225,6 +225,10 @@ class DocumentChunker:
 
         for section in sections:
             for line, _text_id in section["lines"]:
+                # Skip table separator lines (|---|---|)
+                if re.match(r'^\s*\|[\s\-]+\|', line):
+                    continue
+
                 # Track page markers
                 if line.startswith("[PAGE:"):
                     match = re.match(r"\[PAGE:(\d+)\]", line)
@@ -235,9 +239,9 @@ class DocumentChunker:
                     continue
 
                 # Parse line number and Q/A marker (handle both standard and table formats)
-                # Standard format: " 5    Q  Question text"
+                # Standard format: " 5    Q  Question text" or " 5    Q.  Question text"
                 # Table format: "|  | Q. Question text  | timestamp |" or "Q.  Question text"
-                match = re.match(r"^\s*(\d{1,2})\s+([QA])\s+(.+)$", line)
+                match = re.match(r"^\s*(\d{1,2})\s+([QA])\.?\s+(.+)$", line)
                 if not match:
                     # Try table format: "| Q. Text |" or just "Q.  Text"
                     table_match = re.search(r'\|\s*([QA])\.?\s+(.+?)\s*\|', line)
@@ -291,7 +295,19 @@ class DocumentChunker:
                         if bates and bates not in current_metadata.bates_stamps:
                             current_metadata.bates_stamps.append(bates)
 
-                    current_chunk_lines.append(line)
+                    # Clean table formatting before adding to chunk
+                    # Table format: "| text | timestamp |" → "text"
+                    clean_line = line
+                    if '|' in line:
+                        # Extract content from table cells (remove pipes and timestamps)
+                        parts = [p.strip() for p in line.split('|') if p.strip()]
+                        # Remove timestamp (09:30:50 format)
+                        parts = [p for p in parts if not re.match(r'^\d{2}:\d{2}:\d{2}', p)]
+                        if parts:
+                            # Reconstruct as "N Q text" or "N A text"
+                            clean_line = f"{line_num} {qa_marker} {text}"
+
+                    current_chunk_lines.append(clean_line)
                     current_line_attrs.append((line_page, line_bates))
 
                     # Check if we should start a new chunk
@@ -340,7 +356,19 @@ class DocumentChunker:
                                     current_metadata.line_ranges[page_num] = tuple(line_range)
 
                 else:
-                    current_chunk_lines.append(line)
+                    # Clean table formatting from non-Q/A lines too
+                    clean_line = line
+                    if '|' in line:
+                        # Remove pipes and timestamps
+                        parts = [p.strip() for p in line.split('|') if p.strip()]
+                        parts = [p for p in parts if not re.match(r'^\d{2}:\d{2}:\d{2}', p) and not re.match(r'^-+$', p)]
+                        if parts:
+                            clean_line = ' '.join(parts)
+                        else:
+                            # Skip pure separator/timestamp lines
+                            continue
+
+                    current_chunk_lines.append(clean_line)
                     # Non-Q/A lines: inherit last known page/bates
                     last_page = current_line_attrs[-1][0] if current_line_attrs else None
                     last_bates = current_line_attrs[-1][1] if current_line_attrs else None

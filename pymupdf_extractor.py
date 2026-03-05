@@ -284,17 +284,34 @@ def _detect_page_marker(spans: list) -> Optional[int]:
     """Detect 'Page N' marker from a visual line's spans.
 
     Page markers appear at x0 > 400 and y < 95 (near top-right).
+    Also handles alternative format: "Conducted on ... N"
     """
     full_text = " ".join(s["text"] for s in spans).strip()
+
+    # Standard format: "Page N"
     match = re.match(r"^Page\s+(\d+)$", full_text)
+    if match:
+        # Matched standard format
+        pass
+    else:
+        # Alternative format: "Conducted on May 19, 2025 10" - extract final number after year
+        match = re.search(r"Conducted on.*,\s*\d{4}\s+(\d{1,3})\s*$", full_text)
     if not match:
         return None
 
-    # Check position: should be near top of page and right side
-    x0 = min(s["x0"] for s in spans)
-    y_mid = spans[0]["y_mid"]
+    # Check position requirements based on format type
+    is_standard_format = re.match(r"^Page\s+\d+$", full_text) is not None
+    is_conducted_format = "Conducted on" in full_text
 
-    if x0 > PAGE_MARKER_X_THRESHOLD and y_mid < PAGE_MARKER_Y_THRESHOLD:
+    if is_standard_format:
+        # Standard "Page N" - require specific position
+        x0 = min(s["x0"] for s in spans)
+        y_mid = spans[0]["y_mid"]
+        if x0 > PAGE_MARKER_X_THRESHOLD and y_mid < PAGE_MARKER_Y_THRESHOLD:
+            return int(match.group(1))
+    elif is_conducted_format:
+        # "Conducted on..." format - text pattern is specific enough, don't require position
+        # This catches Planet Depos and similar court reporter formats
         return int(match.group(1))
 
     return None

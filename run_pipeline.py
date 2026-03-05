@@ -659,6 +659,11 @@ def run_pipeline(
                             pymupdf_result["citation_count"],
                         )
 
+                        # If PyMuPDF extracted 0 citations, fall back to Docling
+                        if pymupdf_result["citation_count"] == 0:
+                            logger.warning("PyMuPDF extracted 0 citations, falling back to Docling")
+                            raise Exception("No citations extracted - non-standard page markers")
+
                         # Mark all stages complete for PyMuPDF extraction
                         doc_state.mark_stage_complete("conversion")
                         doc_state.mark_stage_complete("post_processing")
